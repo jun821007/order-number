@@ -1,0 +1,141 @@
+{
+  "friends": [
+    {
+      "id": "aa4cf244-5212-48bb-821e-6ba35349bfb7",
+      "name": "j",
+      "receipt_info": {
+        "name": "",
+        "phone": "",
+        "address": ""
+      },
+      "parcels": [
+        {
+          "id": "e1188c7c-8a4d-4c10-86b7-66e42f97d0ed",
+          "tracking_id_china": "78988711863243",
+          "remark": "",
+          "status": "shipped_to_taiwan",
+          "shipping_priority": "normal",
+          "weight_kg": 0.5,
+          "taiwan_parcel_group_id": "1e6d87f2-93b4-4c31-8ad3-0a391928ca09",
+          "created_at": "2026-03-22T14:42:01.033Z",
+          "arrived_at_warehouse_time": "2026-03-22T14:42:57.597Z",
+          "shipped_to_taiwan_time": "2026-03-22T14:43:29.417Z"
+        },
+        {
+          "id": "345fb9ea-ca17-44f6-b647-d411eea337e8",
+          "tracking_id_china": "78988634297456",
+          "remark": "",
+          "status": "shipped_to_taiwan",
+          "shipping_priority": "normal",
+          "weight_kg": 0.3,
+          "taiwan_parcel_group_id": "1e6d87f2-93b4-4c31-8ad3-0a391928ca09",
+          "created_at": "2026-03-22T14:42:01.033Z",
+          "arrived_at_warehouse_time": "2026-03-22T14:43:00.514Z",
+          "shipped_to_taiwan_time": "2026-03-22T14:43:29.417Z"
+        },
+        {
+          "id": "da1700fa-a2cc-48cd-bdd2-6815f8f0d8fb",
+          "tracking_id_china": "78988774010127",
+          "remark": "",
+          "status": "shipped_to_taiwan",
+          "shipping_priority": "normal",
+          "weight_kg": 0.1,
+          "taiwan_parcel_group_id": "80f2ce54-9805-4011-a951-f1a4854c02ee",
+          "created_at": "2026-03-22T14:42:01.033Z",
+          "arrived_at_warehouse_time": "2026-03-22T14:54:36.268Z",
+          "shipped_to_taiwan_time": "2026-03-22T15:17:06.852Z"
+        },
+        {
+          "id": "f866dbb5-3e27-4f03-87a8-4452c193003c",
+          "tracking_id_china": "YT7609271026793",
+          "remark": "",
+          "status": "arrived_at_warehouse",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-22T14:42:01.033Z",
+          "arrived_at_warehouse_time": "2026-03-22T14:54:37.345Z",
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "fd6b0870-772a-45f2-9330-a4534f1d37b6",
+          "tracking_id_china": "435085906933858",
+          "remark": "",
+          "status": "shipped_to_taiwan",
+          "shipping_priority": "normal",
+          "weight_kg": 0.3,
+          "taiwan_parcel_group_id": "80f2ce54-9805-4011-a951-f1a4854c02ee",
+          "created_at": "2026-03-22T14:42:01.033Z",
+          "arrived_at_warehouse_time": "2026-03-22T14:54:38.298Z",
+          "shipped_to_taiwan_time": "2026-03-22T15:17:06.852Z"
+        },
+        {
+          "id": "ca624f7e-de49-4758-bc2a-a2d4e8dad8b8",
+          "tracking_id_china": "773411051205933",
+          "remark": "",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-22T14:42:01.033Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "759d3386-5587-4d58-9e11-00dd060137d2",
+          "tracking_id_china": "78987614509664",
+          "remark": "ipod電池",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-22T15:01:50.791Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        }
+      ]
+    },
+    {
+      "id": "7738b764-9a67-46f2-99b5-75cf217486c4",
+      "name": "e",
+      "receipt_info": {
+        "name": "",
+        "phone": "",
+        "address": ""
+      },
+      "parcels": []
+    },
+    {
+      "id": "af95c2bc-3c1e-403f-81cf-646bd0a6c3f8",
+      "name": "jdjd",
+      "receipt_info": {
+        "name": "",
+        "phone": "",
+        "address": ""
+      },
+      "parcels": []
+    }
+  ],
+  "taiwan_parcel_groups": [
+    {
+      "id": "1e6d87f2-93b4-4c31-8ad3-0a391928ca09",
+      "tracking_id_taiwan": "134",
+      "china_tracking_ids": [
+        "e1188c7c-8a4d-4c10-86b7-66e42f97d0ed",
+        "345fb9ea-ca17-44f6-b647-d411eea337e8"
+      ],
+      "total_weight_kg": 0.8,
+      "created_at": "2026-03-22T14:43:29.417Z"
+    },
+    {
+      "id": "80f2ce54-9805-4011-a951-f1a4854c02ee",
+      "tracking_id_taiwan": "123313",
+      "china_tracking_ids": [
+        "da1700fa-a2cc-48cd-bdd2-6815f8f0d8fb",
+        "fd6b0870-772a-45f2-9330-a4534f1d37b6"
+      ],
+      "total_weight_kg": 0.4,
+      "created_at": "2026-03-22T15:16:44.505Z"
+    }
+  ]
+}

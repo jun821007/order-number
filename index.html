@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>單號分類工具</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>單號分類工具</h1>
+      <p>朋友單號管理、狀態追蹤、批量操作</p>
+    </div>
+    <div id="persistenceBadge" class="persistence-badge">儲存模式: Railway backend</div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div id="friendListToggleArea" class="panel-title-row clickable-header">
+        <h2>朋友列表</h2>
+        <span id="friendListStateText" class="collapse-state">展開</span>
+      </div>
+      <div class="button-row tight">
+        <button id="addFriendBtn" class="btn primary">新增朋友</button>
+      </div>
+
+      <div id="friendListBody" class="hidden">
+        <ul id="friendList" class="friend-list"></ul>
+      </div>
+    </aside>
+
+    <section class="content">
+      <div id="emptyState" class="empty-state">請先從左側選擇朋友，或新增一位朋友開始。</div>
+
+      <div id="friendPanel" class="hidden">
+        <section id="addParcelCard" class="card collapsible-card">
+          <div class="card-click-header"><h3>新增單號（每行一筆：中國單號 [備註]）</h3></div>
+          <div id="addParcelBody" class="hidden">
+            <textarea id="bulkInput" rows="5" placeholder="YT7609271026793 iPhone手機殼&#10;YT1234567890 小米手環&#10;JP9876543210"></textarea>
+
+            <label class="field-label" for="bulkFriendSelect">新增到哪位朋友</label>
+            <select id="bulkFriendSelect">
+              <option value="">請先選擇朋友</option>
+            </select>
+
+            <div class="button-row">
+              <button id="bulkAddBtn" class="btn primary" disabled>批量新增單號</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="inboundCard" class="card collapsible-card">
+          <div class="card-click-header"><h3>批量入庫到轉運倉</h3></div>
+          <div id="inboundBody" class="hidden">
+            <p class="helper-text">格式：`重量 中國單號`，可貼多行。`合計` 行會自動忽略。</p>
+            <textarea id="bulkInboundInput" rows="7" placeholder="0.3 SF1564337616824&#10;0.3 SF1564337616833&#10;0.1 78987614509664&#10;合計7"></textarea>
+
+            <label class="field-label" for="bulkInboundPriority">入庫優先級</label>
+            <select id="bulkInboundPriority">
+              <option value="normal">一般</option>
+              <option value="priority">急</option>
+            </select>
+
+            <label class="field-label" for="bulkInboundFriendSelect">件主（找不到既有單號時歸屬到此朋友）</label>
+            <select id="bulkInboundFriendSelect">
+              <option value="">請選擇朋友</option>
+            </select>
+
+            <div class="button-row wrap">
+              <button id="bulkInboundBtn" class="btn primary">執行批量入庫</button>
+              <button id="copyBulkInboundResultBtn" class="btn">複製結果</button>
+            </div>
+            <pre id="bulkInboundResult" class="summary-box"></pre>
+          </div>
+        </section>
+
+        <section id="shipCard" class="card collapsible-card">
+          <div class="card-click-header"><h3>批量出轉運倉</h3></div>
+          <div id="shipBody" class="hidden">
+            <p class="helper-text">格式：`重量 中國單號`，可貼多行。`合計` 行會自動忽略。</p>
+            <textarea id="bulkShipInput" rows="7" placeholder="0.3 SF1564337616824&#10;0.3 SF1564337616833&#10;0.1 78987614509664&#10;合計7"></textarea>
+
+            <label class="field-label" for="bulkShipTaiwanInput">台灣單號（可選，空白自動產生批次代碼）</label>
+            <input id="bulkShipTaiwanInput" type="text" placeholder="例如 TW1234567890" />
+
+            <div class="button-row wrap">
+              <button id="bulkShipBtn" class="btn primary">執行批量出轉運</button>
+              <button id="copyBulkShipResultBtn" class="btn">複製結果</button>
+            </div>
+            <pre id="bulkShipResult" class="summary-box"></pre>
+          </div>
+        </section>
+
+        <section class="card">
+          <label class="field-label" for="globalTrackingSearch">搜尋單號（可打尾碼，手機建議用這裡）</label>
+          <input id="globalTrackingSearch" type="text" placeholder="例如：只打 824 也可找出含此尾碼的朋友與單號" />
+        </section>
+
+        <section class="card">
+          <div class="panel-title-row">
+            <h3>單號管理</h3>
+            <div class="filters">
+              <input id="searchInput" type="text" placeholder="搜尋中國單號 / 備註 / 台灣單號" />
+              <select id="statusFilter">
+                <option value="">全部狀態</option>
+                <option value="pending_arrival">未到集運倉</option>
+                <option value="arrived_at_warehouse">已到集運倉</option>
+                <option value="shipped_to_taiwan">已出轉運台灣</option>
+              </select>
+              <select id="priorityFilter">
+                <option value="">全部優先級</option>
+                <option value="normal">一般發</option>
+                <option value="priority">急</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th><input id="selectAll" type="checkbox" /></th>
+                  <th>中國單號</th>
+                  <th>備註</th>
+                  <th>件主</th>
+                  <th>狀態</th>
+                  <th>優先級</th>
+                  <th>重量(kg)</th>
+                  <th>台灣單號</th>
+                  <th>歷史摘要</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="parcelTbody"></tbody>
+            </table>
+          </div>
+
+          <div class="button-row wrap">
+            <button id="markShippedBtn" class="btn">標記選中為已出轉運</button>
+            <button id="copyChinaBtn" class="btn">複製選中的中國單號</button>
+            <button id="copyTaiwanBtn" class="btn">複製選中的台灣單號</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="panel-title-row">
+            <h3 id="shippedTitle">已出轉運清單與總重量</h3>
+            <button id="copyShippedSummaryBtn" class="btn">一鍵複製已出轉運資訊</button>
+          </div>
+          <pre id="shippedSummary" class="summary-box"></pre>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="./app-config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
