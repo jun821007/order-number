@@ -360,3 +360,43 @@ th, td {
   color: #4b5563;
   font-size: 13px;
 }
+
+.friend-menu-btn {
+  display: none;
+  white-space: nowrap;
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.35);
+  z-index: 1100;
+}
+
+@media (min-width: 900px) and (max-width: 1366px) and (orientation: landscape) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .friend-menu-btn {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(360px, 88vw);
+    z-index: 1200;
+    transform: translateX(-104%);
+    transition: transform 0.2s ease;
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
+    overflow: auto;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+}

@@ -62,6 +62,9 @@ const els = {
   copyShippedSummaryBtn: document.getElementById("copyShippedSummaryBtn"),
 
   persistenceBadge: document.getElementById("persistenceBadge"),
+  friendMenuBtn: document.getElementById("friendMenuBtn"),
+  sidebar: document.getElementById("sidebar"),
+  sidebarBackdrop: document.getElementById("sidebarBackdrop"),
   toast: document.getElementById("toast")
 };
 
@@ -79,7 +82,8 @@ const state = {
   shipCollapsed: true,
   tableOwnerFilter: "all",
   bulkInboundCopyText: "",
-  bulkShipCopyText: ""
+  bulkShipCopyText: "",
+  sidebarMenuOpen: false
 };
 
 const STATUS_LABEL = {
@@ -115,7 +119,8 @@ function toast(message) {
 }
 
 function updatePersistenceBadge() {
-  els.persistenceBadge.textContent = "儲存模式: Railway backend";
+  if (!els.persistenceBadge) return;
+  els.persistenceBadge.classList.add("hidden");
 }
 
 function updateFriendListCollapseUI() {
@@ -131,6 +136,25 @@ function updateSectionCollapseUI() {
 
 function updateBulkAddAvailability() {
   els.bulkAddBtn.disabled = !state.bulkTargetFriendId;
+}
+
+function isTabletLandscapeMode() {
+  return window.matchMedia("(min-width: 900px) and (max-width: 1366px) and (orientation: landscape)").matches;
+}
+
+function updateSidebarMenuUI() {
+  const useDrawer = isTabletLandscapeMode();
+  if (!els.friendMenuBtn || !els.sidebar || !els.sidebarBackdrop) return;
+
+  els.friendMenuBtn.classList.toggle("hidden", !useDrawer);
+  els.sidebar.classList.toggle("open", useDrawer && state.sidebarMenuOpen);
+  els.sidebarBackdrop.classList.toggle("hidden", !(useDrawer && state.sidebarMenuOpen));
+}
+
+function closeSidebarMenu() {
+  if (!state.sidebarMenuOpen) return;
+  state.sidebarMenuOpen = false;
+  updateSidebarMenuUI();
 }
 
 function getEndpoint(path) {
@@ -383,6 +407,7 @@ function renderFriendList() {
     el.addEventListener("click", () => {
       state.selectedFriendId = el.getAttribute("data-friend-select");
       state.selectedParcelIds.clear();
+      closeSidebarMenu();
       render();
     });
   });
@@ -869,6 +894,7 @@ function renderFriendPanel() {
 function render() {
   updateFriendListCollapseUI();
   updateSectionCollapseUI();
+  updateSidebarMenuUI();
   renderFriendList();
   renderFriendSelects();
   renderFriendPanel();
@@ -977,6 +1003,7 @@ function toggleSelectAll(checked) {
 async function init() {
   updatePersistenceBadge();
   updateFriendListCollapseUI();
+  updateSidebarMenuUI();
 
   try {
     state.data = await loadFromBackend();
@@ -991,6 +1018,27 @@ async function init() {
   els.friendListToggleArea.addEventListener("click", () => {
     state.friendListCollapsed = !state.friendListCollapsed;
     updateFriendListCollapseUI();
+  });
+
+  if (els.friendMenuBtn) {
+    els.friendMenuBtn.addEventListener("click", () => {
+      if (!isTabletLandscapeMode()) return;
+      state.sidebarMenuOpen = !state.sidebarMenuOpen;
+      if (state.sidebarMenuOpen) {
+        state.friendListCollapsed = false;
+        updateFriendListCollapseUI();
+      }
+      updateSidebarMenuUI();
+    });
+  }
+
+  if (els.sidebarBackdrop) {
+    els.sidebarBackdrop.addEventListener("click", closeSidebarMenu);
+  }
+
+  window.addEventListener("resize", () => {
+    if (!isTabletLandscapeMode()) state.sidebarMenuOpen = false;
+    updateSidebarMenuUI();
   });
 
   els.addFriendBtn.addEventListener("click", addFriend);
