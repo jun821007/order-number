@@ -45,6 +45,7 @@ const els = {
   bulkShipResult: document.getElementById("bulkShipResult"),
 
   searchInput: document.getElementById("searchInput"),
+  ownerFilter: document.getElementById("ownerFilter"),
   statusFilter: document.getElementById("statusFilter"),
   priorityFilter: document.getElementById("priorityFilter"),
   selectAll: document.getElementById("selectAll"),
@@ -73,6 +74,7 @@ const state = {
   addParcelCollapsed: true,
   inboundCollapsed: true,
   shipCollapsed: true,
+  tableOwnerFilter: "all",
   bulkInboundCopyText: "",
   bulkShipCopyText: ""
 };
@@ -196,6 +198,19 @@ function enqueuePersist() {
 
 function getFriend() {
   return state.data.friends.find((f) => f.id === state.selectedFriendId) || null;
+}
+
+function findParcelOwnerById(parcelId) {
+  for (const friend of state.data.friends) {
+    const parcel = friend.parcels.find((p) => p.id === parcelId);
+    if (parcel) return { friend, parcel };
+  }
+  return null;
+}
+
+function getScopeFriends() {
+  if (state.tableOwnerFilter === "all") return state.data.friends;
+  return state.data.friends.filter((f) => f.id === state.tableOwnerFilter);
 }
 
 function ownerCode(name) {
@@ -394,6 +409,7 @@ function renderFriendList() {
 function renderFriendSelects() {
   const previousBulk = state.bulkTargetFriendId;
   const previousInbound = state.bulkInboundOwnerFriendId;
+  const previousOwnerFilter = state.tableOwnerFilter;
 
   const fill = (selectEl, placeholder) => {
     selectEl.innerHTML = `<option value="">${placeholder}</option>`;
@@ -405,8 +421,16 @@ function renderFriendSelects() {
     });
   };
 
-  fill(els.bulkFriendSelect, "請先選擇朋友");
-  fill(els.bulkInboundFriendSelect, "請選擇朋友");
+  fill(els.bulkFriendSelect, "\u8acb\u5148\u9078\u64c7\u670b\u53cb");
+  fill(els.bulkInboundFriendSelect, "\u8acb\u9078\u64c7\u670b\u53cb");
+
+  els.ownerFilter.innerHTML = '<option value="all">\u5168\u90e8\u4ef6\u4e3b</option>';
+  state.data.friends.forEach((friend) => {
+    const opt = document.createElement("option");
+    opt.value = friend.id;
+    opt.textContent = friend.name;
+    els.ownerFilter.appendChild(opt);
+  });
 
   if (state.data.friends.some((f) => f.id === previousBulk)) {
     state.bulkTargetFriendId = previousBulk;
@@ -421,6 +445,13 @@ function renderFriendSelects() {
   } else {
     state.bulkInboundOwnerFriendId = "";
   }
+
+  if (previousOwnerFilter === "all" || state.data.friends.some((f) => f.id === previousOwnerFilter)) {
+    state.tableOwnerFilter = previousOwnerFilter;
+  } else {
+    state.tableOwnerFilter = "all";
+  }
+  els.ownerFilter.value = state.tableOwnerFilter;
 
   updateBulkAddAvailability();
 }
@@ -611,7 +642,9 @@ function getFilteredParcels(friend) {
       !keyword ||
       parcel.tracking_id_china.toLowerCase().includes(keyword) ||
       (parcel.remark || "").toLowerCase().includes(keyword) ||
-      tw.includes(keyword);
+      tw.includes(keyword) ||
+      ownerName.includes(keyword) ||
+      receiptName.includes(keyword);
     const inGlobal =
       !globalKeyword ||
       ownerMatched ||
@@ -635,21 +668,19 @@ function compareByNewestShipped(a, b) {
 }
 
 function deleteParcel(parcelId) {
-  const friend = getFriend();
-  if (!friend) return;
-  const parcel = friend.parcels.find((p) => p.id === parcelId);
-  if (!parcel) return;
-  if (!confirm(`確定刪除單號 ${parcel.tracking_id_china}？`)) return;
+  const owner = findParcelOwnerById(parcelId);
+  if (!owner) return;
+  const { friend, parcel } = owner;
+  if (!confirm(`\u78ba\u5b9a\u522a\u9664\u55ae\u865f ${parcel.tracking_id_china}\uff1f`)) return;
   friend.parcels = friend.parcels.filter((p) => p.id !== parcelId);
   state.selectedParcelIds.delete(parcelId);
-  persistAndRender("已刪除單號");
+  persistAndRender("\u5df2\u522a\u9664\u55ae\u865f");
 }
 
 function editParcel(parcelId) {
-  const friend = getFriend();
-  if (!friend) return;
-  const parcel = friend.parcels.find((p) => p.id === parcelId);
-  if (!parcel) return;
+  const owner = findParcelOwnerById(parcelId);
+  if (!owner) return;
+  const { parcel } = owner;
 
   const remark = prompt("備註：", parcel.remark || "");
   if (remark === null) return;
@@ -729,27 +760,39 @@ function buildParcelRow(parcel, ownerName, className = "") {
   return tr;
 }
 
-function renderParcelRows(friend) {
-  const rows = getFilteredParcels(friend);
-  const activeRows = rows.filter((p) => p.status !== "shipped_to_taiwan");
-  const shippedRows = rows.filter((p) => p.status === "shipped_to_taiwan").sort(compareByNewestShipped);
+function renderParcelRows() {
+  const scopedRows = [];
+  getScopeFriends().forEach((friend) => {
+    getFilteredParcels(friend).forEach((parcel) => scopedRows.push({ friend, parcel }));
+  });
+
+  const activeRows = scopedRows.filter((row) => row.parcel.status !== "shipped_to_taiwan");
+  const shippedRows = scopedRows
+    .filter((row) => row.parcel.status === "shipped_to_taiwan")
+    .sort((a, b) => compareByNewestShipped(a.parcel, b.parcel));
   const forceExpandShipped = els.statusFilter.value === "shipped_to_taiwan";
   const hideShipped = !forceExpandShipped && state.shippedCollapsed;
 
   els.parcelTbody.innerHTML = "";
-  activeRows.forEach((p) => els.parcelTbody.appendChild(buildParcelRow(p, friend.name)));
+  activeRows.forEach(({ friend, parcel }) => {
+    els.parcelTbody.appendChild(buildParcelRow(parcel, friend.name));
+  });
 
   if (shippedRows.length) {
     const tr = document.createElement("tr");
     tr.className = "collapse-row";
-    tr.innerHTML = `<td colspan="10"><button class="collapse-toggle" data-toggle-shipped>${hideShipped ? "展開" : "收起"} 已出轉運到台灣 (${shippedRows.length})</button></td>`;
+    tr.innerHTML = `<td colspan="10"><button class="collapse-toggle" data-toggle-shipped>${hideShipped ? "\u5c55\u958b" : "\u6536\u8d77"} \u5df2\u51fa\u8f49\u904b\u5230\u53f0\u7063 (${shippedRows.length})</button></td>`;
     els.parcelTbody.appendChild(tr);
-    if (!hideShipped) shippedRows.forEach((p) => els.parcelTbody.appendChild(buildParcelRow(p, friend.name, "shipped-row")));
+    if (!hideShipped) {
+      shippedRows.forEach(({ friend, parcel }) => {
+        els.parcelTbody.appendChild(buildParcelRow(parcel, friend.name, "shipped-row"));
+      });
+    }
   }
 
-  if (!rows.length) {
+  if (!scopedRows.length) {
     const tr = document.createElement("tr");
-    tr.innerHTML = '<td colspan="10">沒有符合條件的單號</td>';
+    tr.innerHTML = '<td colspan="10">\u6c92\u6709\u7b26\u5408\u689d\u4ef6\u7684\u55ae\u865f</td>';
     els.parcelTbody.appendChild(tr);
   }
 
@@ -768,8 +811,8 @@ function renderParcelRows(friend) {
   els.parcelTbody.querySelectorAll("button[data-copy-one]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-copy-one");
-      const p = friend.parcels.find((x) => x.id === id);
-      if (p) copyText(p.tracking_id_china);
+      const owner = findParcelOwnerById(id);
+      if (owner?.parcel) copyText(owner.parcel.tracking_id_china);
     });
   });
 
@@ -781,40 +824,49 @@ function renderParcelRows(friend) {
   if (toggle) {
     toggle.addEventListener("click", () => {
       state.shippedCollapsed = !state.shippedCollapsed;
-      renderParcelRows(friend);
+      renderParcelRows();
     });
   }
 
-  const visibleIds = [...activeRows.map((x) => x.id), ...(hideShipped ? [] : shippedRows.map((x) => x.id))];
+  const visibleIds = [
+    ...activeRows.map((row) => row.parcel.id),
+    ...(hideShipped ? [] : shippedRows.map((row) => row.parcel.id))
+  ];
   els.selectAll.checked = visibleIds.length > 0 && visibleIds.every((id) => state.selectedParcelIds.has(id));
 }
 
-function renderShippedSummary(friend) {
-  const shipped = friend.parcels.filter((p) => p.status === "shipped_to_taiwan").sort(compareByNewestShipped);
-  els.shippedTitle.textContent = `${friend.name} 已出轉運包裹清單與總重量`;
+function renderShippedSummary() {
+  const shippedRows = [];
+  getScopeFriends().forEach((friend) => {
+    friend.parcels
+      .filter((p) => p.status === "shipped_to_taiwan")
+      .forEach((parcel) => shippedRows.push({ friend, parcel }));
+  });
+  shippedRows.sort((a, b) => compareByNewestShipped(a.parcel, b.parcel));
 
-  if (!shipped.length) {
-    els.shippedSummary.textContent = "目前沒有已出轉運資料。";
+  const scopeLabel = state.tableOwnerFilter === "all"
+    ? "\u5168\u90e8\u4ef6\u4e3b"
+    : (state.data.friends.find((f) => f.id === state.tableOwnerFilter)?.name || "\u6307\u5b9a\u4ef6\u4e3b");
+  els.shippedTitle.textContent = `${scopeLabel} \u5df2\u51fa\u8f49\u904b\u5305\u88f9\u6e05\u55ae\u8207\u7e3d\u91cd\u91cf`;
+
+  if (!shippedRows.length) {
+    els.shippedSummary.textContent = "\u76ee\u524d\u6c92\u6709\u5df2\u51fa\u8f49\u904b\u8cc7\u6599\u3002";
     return;
   }
 
-  const lines = shipped.map((p) => `${Number(p.weight_kg || 0).toFixed(2)} ${p.tracking_id_china} ${ownerCode(friend.name)} | ${formatTime(p.shipped_to_taiwan_time)}`);
-  const total = shipped.reduce((sum, p) => sum + (p.weight_kg || 0), 0);
-  els.shippedSummary.textContent = `${lines.join("\n")}\n\n合計重量: ${total.toFixed(2)}kg`;
+  const lines = shippedRows.map(({ friend, parcel }) => {
+    return `${Number(parcel.weight_kg || 0).toFixed(2)} ${parcel.tracking_id_china} ${ownerCode(friend.name)} | ${formatTime(parcel.shipped_to_taiwan_time)}`;
+  });
+  const total = shippedRows.reduce((sum, row) => sum + (row.parcel.weight_kg || 0), 0);
+  els.shippedSummary.textContent = `${lines.join("\n")}\n\n\u5408\u8a08\u91cd\u91cf: ${total.toFixed(2)}kg`;
 }
 
 function renderFriendPanel() {
-  const friend = getFriend();
-  if (!friend) {
-    els.emptyState.classList.remove("hidden");
-    els.friendPanel.classList.add("hidden");
-    return;
-  }
   els.emptyState.classList.add("hidden");
   els.friendPanel.classList.remove("hidden");
 
-  renderParcelRows(friend);
-  renderShippedSummary(friend);
+  renderParcelRows();
+  renderShippedSummary();
 }
 
 function render() {
@@ -826,22 +878,20 @@ function render() {
 }
 
 function applyGlobalSearchFilter() {
-  const filtered = getFilteredFriends();
-  if (!state.selectedFriendId && filtered.length > 0) {
-    state.selectedFriendId = filtered[0]?.id || null;
-    state.selectedParcelIds.clear();
-  }
   render();
 }
 
 function markSelectedShipped() {
-  const friend = getFriend();
-  if (!friend) return;
-  const selected = friend.parcels.filter((p) => state.selectedParcelIds.has(p.id));
-  if (!selected.length) return toast("請先勾選單號");
+  const selected = [];
+  state.data.friends.forEach((friend) => {
+    friend.parcels.forEach((parcel) => {
+      if (state.selectedParcelIds.has(parcel.id)) selected.push(parcel);
+    });
+  });
+  if (!selected.length) return toast("\u8acb\u5148\u52fe\u9078\u55ae\u865f");
 
-  const trackingTaiwan = (prompt("輸入一個台灣單號(留空略過)：") || "").trim();
-  if (!trackingTaiwan) return toast("已略過操作");
+  const trackingTaiwan = (prompt("\u8f38\u5165\u4e00\u500b\u53f0\u7063\u55ae\u865f(\u7559\u7a7a\u7565\u904e)\uff1a") || "").trim();
+  if (!trackingTaiwan) return toast("\u5df2\u7565\u904e\u64cd\u4f5c");
 
   const group = upsertTaiwanGroupByTracking(trackingTaiwan);
   selected.forEach((parcel) => {
@@ -851,33 +901,44 @@ function markSelectedShipped() {
     linkParcelToTaiwanGroup(parcel.id, group.id);
   });
 
-  persistAndRender("已更新為已出轉運");
+  persistAndRender("\u5df2\u66f4\u65b0\u70ba\u5df2\u51fa\u8f49\u904b");
 }
 
 function copySelectedChina() {
-  const friend = getFriend();
-  if (!friend) return;
-  const text = friend.parcels.filter((p) => state.selectedParcelIds.has(p.id)).map((p) => p.tracking_id_china).join("\n");
-  if (!text) return toast("沒有可複製資料");
-  copyText(text);
+  const text = [];
+  state.data.friends.forEach((friend) => {
+    friend.parcels.forEach((parcel) => {
+      if (state.selectedParcelIds.has(parcel.id)) text.push(parcel.tracking_id_china);
+    });
+  });
+  if (!text.length) return toast("\u6c92\u6709\u53ef\u8907\u88fd\u8cc7\u6599");
+  copyText(text.join("\n"));
 }
 
 function copySelectedTaiwan() {
-  const friend = getFriend();
-  if (!friend) return;
-  const text = [...new Set(friend.parcels.filter((p) => state.selectedParcelIds.has(p.id)).map((p) => getTaiwanIdForParcel(p)).filter(Boolean))].join("\n");
-  if (!text) return toast("沒有可複製資料");
+  const taiwanIds = new Set();
+  state.data.friends.forEach((friend) => {
+    friend.parcels.forEach((parcel) => {
+      if (!state.selectedParcelIds.has(parcel.id)) return;
+      const tw = getTaiwanIdForParcel(parcel);
+      if (tw) taiwanIds.add(tw);
+    });
+  });
+  const text = [...taiwanIds].join("\n");
+  if (!text) return toast("\u6c92\u6709\u53ef\u8907\u88fd\u8cc7\u6599");
   copyText(text);
 }
 
 function toggleSelectAll(checked) {
-  const friend = getFriend();
-  if (!friend) return;
-  getFilteredParcels(friend).forEach((p) => {
-    if (checked) state.selectedParcelIds.add(p.id);
-    else state.selectedParcelIds.delete(p.id);
+  const rows = [];
+  getScopeFriends().forEach((friend) => {
+    getFilteredParcels(friend).forEach((parcel) => rows.push(parcel));
   });
-  renderParcelRows(friend);
+  rows.forEach((parcel) => {
+    if (checked) state.selectedParcelIds.add(parcel.id);
+    else state.selectedParcelIds.delete(parcel.id);
+  });
+  renderParcelRows();
 }
 
 async function init() {
@@ -923,6 +984,12 @@ async function init() {
     state.bulkInboundOwnerFriendId = e.target.value;
   });
 
+  els.ownerFilter.addEventListener("change", (e) => {
+    state.tableOwnerFilter = e.target.value || "all";
+    state.selectedParcelIds.clear();
+    renderFriendPanel();
+  });
+
   els.bulkAddBtn.addEventListener("click", addBulkParcels);
   els.bulkInboundBtn.addEventListener("click", runBulkInbound);
   els.copyBulkInboundResultBtn.addEventListener("click", () => {
@@ -936,7 +1003,7 @@ async function init() {
     copyText(state.bulkShipCopyText);
   });
 
-  [els.searchInput, els.statusFilter, els.priorityFilter].forEach((el) => {
+  [els.searchInput, els.ownerFilter, els.statusFilter, els.priorityFilter].forEach((el) => {
     el.addEventListener("input", renderFriendPanel);
     el.addEventListener("change", renderFriendPanel);
   });

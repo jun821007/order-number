@@ -101,17 +101,20 @@
           <div class="panel-title-row">
             <h3>單號管理</h3>
             <div class="filters">
-              <input id="searchInput" type="text" placeholder="搜尋中國單號 / 備註 / 台灣單號" />
+              <input id="searchInput" type="text" placeholder="&#25628;&#23563;&#20013;&#22283;&#21934;&#34399; / &#20633;&#35387; / &#21488;&#28771;&#21934;&#34399; / &#20214;&#20027;" />
+              <select id="ownerFilter">
+                <option value="all">&#20840;&#37096;&#20214;&#20027;</option>
+              </select>
               <select id="statusFilter">
-                <option value="">全部狀態</option>
-                <option value="pending_arrival">未到集運倉</option>
-                <option value="arrived_at_warehouse">已到集運倉</option>
-                <option value="shipped_to_taiwan">已出轉運台灣</option>
+                <option value="">&#20840;&#37096;&#29376;&#24907;</option>
+                <option value="pending_arrival">&#26410;&#21040;&#38598;&#36939;&#20489;</option>
+                <option value="arrived_at_warehouse">&#24050;&#21040;&#38598;&#36939;&#20489;</option>
+                <option value="shipped_to_taiwan">&#24050;&#20986;&#36681;&#36939;&#21488;&#28771;</option>
               </select>
               <select id="priorityFilter">
-                <option value="">全部優先級</option>
-                <option value="normal">一般發</option>
-                <option value="priority">急</option>
+                <option value="">&#20840;&#37096;&#20778;&#20808;&#32026;</option>
+                <option value="normal">&#19968;&#33324;&#30332;</option>
+                <option value="priority">&#24613;</option>
               </select>
             </div>
           </div>

@@ -139,9 +139,9 @@ textarea, input, select {
 
 .filters {
   display: grid;
-  grid-template-columns: 1fr 160px 140px;
+  grid-template-columns: minmax(220px, 1fr) 150px 150px 140px;
   gap: 8px;
-  min-width: 500px;
+  min-width: 700px;
 }
 
 .table-wrap { overflow: auto; }
