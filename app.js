@@ -629,12 +629,10 @@ function runBulkShip() {
 
 function getFilteredParcels(friend) {
   const keyword = els.searchInput.value.trim().toLowerCase();
-  const globalKeyword = (els.globalTrackingSearch.value || "").trim().toLowerCase();
   const status = els.statusFilter.value;
   const priority = els.priorityFilter.value;
   const ownerName = (friend.name || "").toLowerCase();
   const receiptName = (friend.receipt_info?.name || "").toLowerCase();
-  const ownerMatched = !!globalKeyword && (ownerName.includes(globalKeyword) || receiptName.includes(globalKeyword));
 
   return friend.parcels.filter((parcel) => {
     const tw = getTaiwanIdForParcel(parcel).toLowerCase();
@@ -645,14 +643,9 @@ function getFilteredParcels(friend) {
       tw.includes(keyword) ||
       ownerName.includes(keyword) ||
       receiptName.includes(keyword);
-    const inGlobal =
-      !globalKeyword ||
-      ownerMatched ||
-      parcel.tracking_id_china.toLowerCase().includes(globalKeyword) ||
-      tw.includes(globalKeyword);
     const inStatus = !status || parcel.status === status;
     const inPriority = !priority || parcel.shipping_priority === priority;
-    return inKeyword && inGlobal && inStatus && inPriority;
+    return inKeyword && inStatus && inPriority;
   });
 }
 
@@ -878,7 +871,7 @@ function render() {
 }
 
 function applyGlobalSearchFilter() {
-  render();
+  renderFriendList();
 }
 
 function markSelectedShipped() {
