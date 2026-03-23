@@ -128,10 +128,19 @@ app.patch("/api/order-tool/data", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+});
+
+app.listen(PORT, "0.0.0.0", () => {
   ensureDataFile()
     .then(() => {
       console.log(`Order tool backend running on :${PORT}`);
+      console.log("Listening host: 0.0.0.0");
       console.log(`Data file path: ${activeDataFilePath}`);
     })
     .catch((error) => {
