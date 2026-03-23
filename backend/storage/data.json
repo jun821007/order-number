@@ -1,141 +1,232 @@
 {
   "friends": [
     {
-      "id": "aa4cf244-5212-48bb-821e-6ba35349bfb7",
-      "name": "j",
+      "id": "03705693-b303-4d30-8606-5c647f09a5b8",
+      "name": "奕霆",
       "receipt_info": {
         "name": "",
         "phone": "",
-        "address": ""
+        "address": "",
+        "id_number": ""
       },
       "parcels": [
         {
-          "id": "e1188c7c-8a4d-4c10-86b7-66e42f97d0ed",
+          "id": "a1ab9827-2d8d-4209-bb47-964dfc32df43",
           "tracking_id_china": "78988711863243",
-          "remark": "",
-          "status": "shipped_to_taiwan",
-          "shipping_priority": "normal",
-          "weight_kg": 0.5,
-          "taiwan_parcel_group_id": "1e6d87f2-93b4-4c31-8ad3-0a391928ca09",
-          "created_at": "2026-03-22T14:42:01.033Z",
-          "arrived_at_warehouse_time": "2026-03-22T14:42:57.597Z",
-          "shipped_to_taiwan_time": "2026-03-22T14:43:29.417Z"
-        },
-        {
-          "id": "345fb9ea-ca17-44f6-b647-d411eea337e8",
-          "tracking_id_china": "78988634297456",
-          "remark": "",
-          "status": "shipped_to_taiwan",
-          "shipping_priority": "normal",
-          "weight_kg": 0.3,
-          "taiwan_parcel_group_id": "1e6d87f2-93b4-4c31-8ad3-0a391928ca09",
-          "created_at": "2026-03-22T14:42:01.033Z",
-          "arrived_at_warehouse_time": "2026-03-22T14:43:00.514Z",
-          "shipped_to_taiwan_time": "2026-03-22T14:43:29.417Z"
-        },
-        {
-          "id": "da1700fa-a2cc-48cd-bdd2-6815f8f0d8fb",
-          "tracking_id_china": "78988774010127",
-          "remark": "",
-          "status": "shipped_to_taiwan",
-          "shipping_priority": "normal",
-          "weight_kg": 0.1,
-          "taiwan_parcel_group_id": "80f2ce54-9805-4011-a951-f1a4854c02ee",
-          "created_at": "2026-03-22T14:42:01.033Z",
-          "arrived_at_warehouse_time": "2026-03-22T14:54:36.268Z",
-          "shipped_to_taiwan_time": "2026-03-22T15:17:06.852Z"
-        },
-        {
-          "id": "f866dbb5-3e27-4f03-87a8-4452c193003c",
-          "tracking_id_china": "YT7609271026793",
-          "remark": "",
-          "status": "arrived_at_warehouse",
-          "shipping_priority": "normal",
-          "weight_kg": 0,
-          "taiwan_parcel_group_id": null,
-          "created_at": "2026-03-22T14:42:01.033Z",
-          "arrived_at_warehouse_time": "2026-03-22T14:54:37.345Z",
-          "shipped_to_taiwan_time": null
-        },
-        {
-          "id": "fd6b0870-772a-45f2-9330-a4534f1d37b6",
-          "tracking_id_china": "435085906933858",
-          "remark": "",
-          "status": "shipped_to_taiwan",
-          "shipping_priority": "normal",
-          "weight_kg": 0.3,
-          "taiwan_parcel_group_id": "80f2ce54-9805-4011-a951-f1a4854c02ee",
-          "created_at": "2026-03-22T14:42:01.033Z",
-          "arrived_at_warehouse_time": "2026-03-22T14:54:38.298Z",
-          "shipped_to_taiwan_time": "2026-03-22T15:17:06.852Z"
-        },
-        {
-          "id": "ca624f7e-de49-4758-bc2a-a2d4e8dad8b8",
-          "tracking_id_china": "773411051205933",
-          "remark": "",
+          "remark": "衣服",
           "status": "pending_arrival",
           "shipping_priority": "normal",
           "weight_kg": 0,
           "taiwan_parcel_group_id": null,
-          "created_at": "2026-03-22T14:42:01.033Z",
+          "created_at": "2026-03-23T08:12:56.564Z",
           "arrived_at_warehouse_time": null,
           "shipped_to_taiwan_time": null
         },
         {
-          "id": "759d3386-5587-4d58-9e11-00dd060137d2",
-          "tracking_id_china": "78987614509664",
-          "remark": "ipod電池",
+          "id": "9d0b8d01-29cf-4a0c-97a3-e9f3db812761",
+          "tracking_id_china": "78988634297456",
+          "remark": "衣服",
           "status": "pending_arrival",
           "shipping_priority": "normal",
           "weight_kg": 0,
           "taiwan_parcel_group_id": null,
-          "created_at": "2026-03-22T15:01:50.791Z",
+          "created_at": "2026-03-23T08:12:56.564Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "f0c1967f-7f85-4b3e-8710-ed5d828c8618",
+          "tracking_id_china": "78988774010127",
+          "remark": "衣服",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:12:56.564Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "eff443ae-980b-4f6f-81e7-4a6f2743e4a4",
+          "tracking_id_china": "YT7609271026793",
+          "remark": "衣服",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:12:56.564Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "96f398f8-6af9-4057-9be8-71f387506cf9",
+          "tracking_id_china": "435085906933858",
+          "remark": "衣服",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:12:56.564Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "8c0ca7bb-4262-4bc0-bc4f-041a3833dff9",
+          "tracking_id_china": "773411051205933",
+          "remark": "衣服",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:12:56.564Z",
           "arrived_at_warehouse_time": null,
           "shipped_to_taiwan_time": null
         }
       ]
     },
     {
-      "id": "7738b764-9a67-46f2-99b5-75cf217486c4",
-      "name": "e",
+      "id": "8d84d3b1-56f2-43bf-a02e-8e0ed903b583",
+      "name": "鈞",
       "receipt_info": {
         "name": "",
         "phone": "",
-        "address": ""
+        "address": "",
+        "id_number": ""
+      },
+      "parcels": [
+        {
+          "id": "bb742c7b-9b85-426b-95d5-7a9b5b8f14a8",
+          "tracking_id_china": "YT7609540499996",
+          "remark": "手機支架",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:14:26.563Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "7415c123-a80b-47cf-887e-2109e42ee78c",
+          "tracking_id_china": "9821796029168",
+          "remark": "收納盒",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:14:26.563Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "1da02b51-2029-4e7a-81fe-fa396cf660b2",
+          "tracking_id_china": "773411452372550",
+          "remark": "手機殼",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:14:26.563Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "57cef653-ca94-45cb-a801-57cf8f2d76f4",
+          "tracking_id_china": "YT7609703084344",
+          "remark": "海報",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:14:26.563Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        }
+      ]
+    },
+    {
+      "id": "cfecfb51-c688-412a-b16b-21ab908ab7f4",
+      "name": "花哥",
+      "receipt_info": {
+        "name": "",
+        "phone": "",
+        "address": "",
+        "id_number": ""
       },
       "parcels": []
     },
     {
-      "id": "af95c2bc-3c1e-403f-81cf-646bd0a6c3f8",
-      "name": "jdjd",
+      "id": "f4ae3a5f-e068-4526-b101-d9edfe80c83d",
+      "name": "子傑",
       "receipt_info": {
         "name": "",
         "phone": "",
-        "address": ""
+        "address": "",
+        "id_number": ""
       },
-      "parcels": []
+      "parcels": [
+        {
+          "id": "7aaf613f-f0a0-4f21-9b20-d04bcad92ed0",
+          "tracking_id_china": "SF1543004796069",
+          "remark": "機械錶",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:15:46.447Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "49fa72f1-e845-4f22-a55f-bd2c2418c79a",
+          "tracking_id_china": "YT7609158154283",
+          "remark": "包包",
+          "status": "arrived_at_warehouse",
+          "shipping_priority": "normal",
+          "weight_kg": 1.2,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:17:10.430Z",
+          "arrived_at_warehouse_time": "2026-03-23T08:20:16.628Z",
+          "shipped_to_taiwan_time": null
+        }
+      ]
+    },
+    {
+      "id": "02286656-0443-48e0-b6a7-d9d718523ceb",
+      "name": "小良哥",
+      "receipt_info": {
+        "name": "",
+        "phone": "",
+        "address": "",
+        "id_number": ""
+      },
+      "parcels": [
+        {
+          "id": "304664a5-6921-4c67-ab0e-8f42cfb16280",
+          "tracking_id_china": "78989109913536",
+          "remark": "維修工具",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:18:42.606Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        },
+        {
+          "id": "7f8cd479-b2ad-4b0a-b606-b0dac6115b5d",
+          "tracking_id_china": "JT3156735209225",
+          "remark": "簽字筆",
+          "status": "pending_arrival",
+          "shipping_priority": "normal",
+          "weight_kg": 0,
+          "taiwan_parcel_group_id": null,
+          "created_at": "2026-03-23T08:18:42.606Z",
+          "arrived_at_warehouse_time": null,
+          "shipped_to_taiwan_time": null
+        }
+      ]
     }
   ],
-  "taiwan_parcel_groups": [
-    {
-      "id": "1e6d87f2-93b4-4c31-8ad3-0a391928ca09",
-      "tracking_id_taiwan": "134",
-      "china_tracking_ids": [
-        "e1188c7c-8a4d-4c10-86b7-66e42f97d0ed",
-        "345fb9ea-ca17-44f6-b647-d411eea337e8"
-      ],
-      "total_weight_kg": 0.8,
-      "created_at": "2026-03-22T14:43:29.417Z"
-    },
-    {
-      "id": "80f2ce54-9805-4011-a951-f1a4854c02ee",
-      "tracking_id_taiwan": "123313",
-      "china_tracking_ids": [
-        "da1700fa-a2cc-48cd-bdd2-6815f8f0d8fb",
-        "fd6b0870-772a-45f2-9330-a4534f1d37b6"
-      ],
-      "total_weight_kg": 0.4,
-      "created_at": "2026-03-22T15:16:44.505Z"
-    }
-  ]
+  "taiwan_parcel_groups": []
 }
