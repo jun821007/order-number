@@ -353,3 +353,10 @@ th, td {
 .collapsible-card { cursor:pointer; }
 .collapsible-card .hidden, .collapsible-card input, .collapsible-card textarea, .collapsible-card select, .collapsible-card button { cursor:auto; }
 
+
+
+.parcel-count {
+  margin-top: 8px;
+  color: #4b5563;
+  font-size: 13px;
+}

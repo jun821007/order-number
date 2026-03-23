@@ -50,8 +50,11 @@ const els = {
   priorityFilter: document.getElementById("priorityFilter"),
   selectAll: document.getElementById("selectAll"),
   parcelTbody: document.getElementById("parcelTbody"),
+  parcelCountText: document.getElementById("parcelCountText"),
+  markArrivedBtn: document.getElementById("markArrivedBtn"),
   markShippedBtn: document.getElementById("markShippedBtn"),
   copyChinaBtn: document.getElementById("copyChinaBtn"),
+  copyChinaRemarkBtn: document.getElementById("copyChinaRemarkBtn"),
   copyTaiwanBtn: document.getElementById("copyTaiwanBtn"),
 
   shippedTitle: document.getElementById("shippedTitle"),
@@ -826,6 +829,7 @@ function renderParcelRows() {
     ...(hideShipped ? [] : shippedRows.map((row) => row.parcel.id))
   ];
   els.selectAll.checked = visibleIds.length > 0 && visibleIds.every((id) => state.selectedParcelIds.has(id));
+  if (els.parcelCountText) els.parcelCountText.textContent = `\u76ee\u524d\u5171 ${scopedRows.length} \u7b46\u55ae\u865f`;
 }
 
 function renderShippedSummary() {
@@ -874,6 +878,29 @@ function applyGlobalSearchFilter() {
   renderFriendList();
 }
 
+function markSelectedArrived() {
+  const selected = [];
+  state.data.friends.forEach((friend) => {
+    friend.parcels.forEach((parcel) => {
+      if (state.selectedParcelIds.has(parcel.id)) selected.push(parcel);
+    });
+  });
+  if (!selected.length) return toast("\u8acb\u5148\u52fe\u9078\u55ae\u865f");
+
+  const now = nowIso();
+  selected.forEach((parcel) => {
+    parcel.status = "arrived_at_warehouse";
+    parcel.arrived_at_warehouse_time = now;
+    parcel.shipped_to_taiwan_time = null;
+    if (parcel.taiwan_parcel_group_id) {
+      linkParcelToTaiwanGroup(parcel.id, "");
+      parcel.taiwan_parcel_group_id = null;
+    }
+  });
+
+  persistAndRender("\u5df2\u66f4\u65b0\u70ba\u5df2\u5230\u96c6\u904b\u5009");
+}
+
 function markSelectedShipped() {
   const selected = [];
   state.data.friends.forEach((friend) => {
@@ -902,6 +929,19 @@ function copySelectedChina() {
   state.data.friends.forEach((friend) => {
     friend.parcels.forEach((parcel) => {
       if (state.selectedParcelIds.has(parcel.id)) text.push(parcel.tracking_id_china);
+    });
+  });
+  if (!text.length) return toast("\u6c92\u6709\u53ef\u8907\u88fd\u8cc7\u6599");
+  copyText(text.join("\n"));
+}
+
+function copySelectedChinaWithRemark() {
+  const text = [];
+  state.data.friends.forEach((friend) => {
+    friend.parcels.forEach((parcel) => {
+      if (!state.selectedParcelIds.has(parcel.id)) return;
+      const remark = (parcel.remark || "").trim();
+      text.push(remark ? `${parcel.tracking_id_china} ${remark}` : parcel.tracking_id_china);
     });
   });
   if (!text.length) return toast("\u6c92\u6709\u53ef\u8907\u88fd\u8cc7\u6599");
@@ -1002,8 +1042,10 @@ async function init() {
   });
 
   els.selectAll.addEventListener("change", (e) => toggleSelectAll(e.target.checked));
+  if (els.markArrivedBtn) els.markArrivedBtn.addEventListener("click", markSelectedArrived);
   els.markShippedBtn.addEventListener("click", markSelectedShipped);
   els.copyChinaBtn.addEventListener("click", copySelectedChina);
+  if (els.copyChinaRemarkBtn) els.copyChinaRemarkBtn.addEventListener("click", copySelectedChinaWithRemark);
   els.copyTaiwanBtn.addEventListener("click", copySelectedTaiwan);
   els.copyShippedSummaryBtn.addEventListener("click", () => copyText(els.shippedSummary.textContent));
 
