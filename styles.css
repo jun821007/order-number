@@ -400,3 +400,37 @@ th, td {
     transform: translateX(0);
   }
 }
+
+.shipped-summary-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.shipped-summary-total {
+  color: #374151;
+  font-weight: 600;
+}
+
+.shipped-group {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f9fafb;
+  padding: 8px 10px;
+}
+
+.shipped-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.shipped-group-items {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #374151;
+}
+
+.shipped-group-items li {
+  line-height: 1.6;
+}

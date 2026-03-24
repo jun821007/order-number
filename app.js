@@ -58,7 +58,8 @@ const els = {
   copyTaiwanBtn: document.getElementById("copyTaiwanBtn"),
 
   shippedTitle: document.getElementById("shippedTitle"),
-  shippedSummary: document.getElementById("shippedSummary"),
+  shippedTaiwanSearch: document.getElementById("shippedTaiwanSearch"),
+  shippedSummaryList: document.getElementById("shippedSummaryList"),
   copyShippedSummaryBtn: document.getElementById("copyShippedSummaryBtn"),
 
   persistenceBadge: document.getElementById("persistenceBadge"),
@@ -83,7 +84,8 @@ const state = {
   tableOwnerFilter: "all",
   bulkInboundCopyText: "",
   bulkShipCopyText: "",
-  sidebarMenuOpen: false
+  sidebarMenuOpen: false,
+  shippedSummaryCopyText: ""
 };
 
 const STATUS_LABEL = {
@@ -109,6 +111,11 @@ function nowIso() {
 function formatTime(iso) {
   if (!iso) return "-";
   return new Date(iso).toLocaleString("zh-TW", { hour12: false });
+}
+
+function formatDateOnly(iso) {
+  if (!iso) return "-";
+  return new Date(iso).toLocaleDateString("zh-TW");
 }
 
 function toast(message) {
@@ -864,23 +871,97 @@ function renderShippedSummary() {
       .filter((p) => p.status === "shipped_to_taiwan")
       .forEach((parcel) => shippedRows.push({ friend, parcel }));
   });
-  shippedRows.sort((a, b) => compareByNewestShipped(a.parcel, b.parcel));
 
   const scopeLabel = state.tableOwnerFilter === "all"
-    ? "\u5168\u90e8\u4ef6\u4e3b"
-    : (state.data.friends.find((f) => f.id === state.tableOwnerFilter)?.name || "\u6307\u5b9a\u4ef6\u4e3b");
-  els.shippedTitle.textContent = `${scopeLabel} \u5df2\u51fa\u8f49\u904b\u5305\u88f9\u6e05\u55ae\u8207\u7e3d\u91cd\u91cf`;
+    ? "全部件主"
+    : (state.data.friends.find((f) => f.id === state.tableOwnerFilter)?.name || "指定件主");
+  els.shippedTitle.textContent = `${scopeLabel} 已轉出運包裹清單與總重量`;
 
-  if (!shippedRows.length) {
-    els.shippedSummary.textContent = "\u76ee\u524d\u6c92\u6709\u5df2\u51fa\u8f49\u904b\u8cc7\u6599\u3002";
+  if (!els.shippedSummaryList) return;
+
+  const keyword = (els.shippedTaiwanSearch?.value || "").trim().toLowerCase();
+  const groupMap = new Map();
+
+  shippedRows.forEach(({ friend, parcel }) => {
+    const taiwanId = (getTaiwanIdForParcel(parcel) || "").trim();
+    if (!taiwanId) return;
+    if (keyword && !taiwanId.toLowerCase().includes(keyword)) return;
+
+    const shippedAt = parcel.shipped_to_taiwan_time || parcel.arrived_at_warehouse_time || parcel.created_at || "";
+    const ts = Number.isFinite(new Date(shippedAt).getTime()) ? new Date(shippedAt).getTime() : 0;
+
+    if (!groupMap.has(taiwanId)) {
+      groupMap.set(taiwanId, {
+        taiwanId,
+        latestTs: ts,
+        latestDate: formatDateOnly(shippedAt),
+        items: []
+      });
+    }
+
+    const group = groupMap.get(taiwanId);
+    if (ts >= group.latestTs) {
+      group.latestTs = ts;
+      group.latestDate = formatDateOnly(shippedAt);
+    }
+
+    group.items.push({
+      weight: Number(parcel.weight_kg || 0),
+      chinaTracking: parcel.tracking_id_china,
+      ownerName: friend.name || "-",
+      date: formatDateOnly(shippedAt),
+      ts
+    });
+  });
+
+  const groups = [...groupMap.values()].sort((a, b) => b.latestTs - a.latestTs);
+  groups.forEach((group) => group.items.sort((a, b) => b.ts - a.ts));
+
+  els.shippedSummaryList.innerHTML = "";
+
+  if (!groups.length) {
+    state.shippedSummaryCopyText = "";
+    els.shippedSummaryList.textContent = "目前沒有符合條件的已轉出資料。";
     return;
   }
 
-  const lines = shippedRows.map(({ friend, parcel }) => {
-    return `${Number(parcel.weight_kg || 0).toFixed(2)} ${parcel.tracking_id_china} ${ownerCode(friend.name)} | ${formatTime(parcel.shipped_to_taiwan_time)}`;
+  const totalWeight = groups.reduce((sum, group) => {
+    return sum + group.items.reduce((sub, item) => sub + item.weight, 0);
+  }, 0);
+
+  const totalEl = document.createElement("div");
+  totalEl.className = "shipped-summary-total";
+  totalEl.textContent = `合計重量: ${totalWeight.toFixed(2)}kg`;
+  els.shippedSummaryList.appendChild(totalEl);
+
+  const copyLines = [];
+
+  groups.forEach((group) => {
+    const detail = document.createElement("details");
+    detail.className = "shipped-group";
+
+    const summary = document.createElement("summary");
+    summary.textContent = `台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`;
+    detail.appendChild(summary);
+
+    const ul = document.createElement("ul");
+    ul.className = "shipped-group-items";
+
+    copyLines.push(`台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`);
+
+    group.items.forEach((item) => {
+      const li = document.createElement("li");
+      li.textContent = `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName} | ${item.date}`;
+      ul.appendChild(li);
+      copyLines.push(`  ${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName} | ${item.date}`);
+    });
+
+    detail.appendChild(ul);
+    els.shippedSummaryList.appendChild(detail);
   });
-  const total = shippedRows.reduce((sum, row) => sum + (row.parcel.weight_kg || 0), 0);
-  els.shippedSummary.textContent = `${lines.join("\n")}\n\n\u5408\u8a08\u91cd\u91cf: ${total.toFixed(2)}kg`;
+
+  copyLines.push(`\n合計重量: ${totalWeight.toFixed(2)}kg`);
+  state.shippedSummaryCopyText = copyLines.join("\n");
 }
 
 function renderFriendPanel() {
@@ -1095,7 +1176,14 @@ async function init() {
   els.copyChinaBtn.addEventListener("click", copySelectedChina);
   if (els.copyChinaRemarkBtn) els.copyChinaRemarkBtn.addEventListener("click", copySelectedChinaWithRemark);
   els.copyTaiwanBtn.addEventListener("click", copySelectedTaiwan);
-  els.copyShippedSummaryBtn.addEventListener("click", () => copyText(els.shippedSummary.textContent));
+  if (els.shippedTaiwanSearch) {
+    els.shippedTaiwanSearch.addEventListener("input", renderShippedSummary);
+  }
+
+  els.copyShippedSummaryBtn.addEventListener("click", () => {
+    if (!state.shippedSummaryCopyText) return toast("目前沒有可複製的已轉出資料");
+    copyText(state.shippedSummaryCopyText);
+  });
 
   render();
 }
