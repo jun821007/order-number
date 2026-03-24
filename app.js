@@ -49,7 +49,9 @@ const els = {
   statusFilter: document.getElementById("statusFilter"),
   priorityFilter: document.getElementById("priorityFilter"),
   selectAll: document.getElementById("selectAll"),
+  selectAllMobile: document.getElementById("selectAllMobile"),
   parcelTbody: document.getElementById("parcelTbody"),
+  parcelCardList: document.getElementById("parcelCardList"),
   parcelCountText: document.getElementById("parcelCountText"),
   markArrivedBtn: document.getElementById("markArrivedBtn"),
   markShippedBtn: document.getElementById("markShippedBtn"),
@@ -145,6 +147,10 @@ function updateBulkAddAvailability() {
 
 function shouldUseSidebarDrawer() {
   return window.matchMedia("(max-width: 1100px), (min-width: 900px) and (max-width: 1366px) and (orientation: landscape)").matches;
+}
+
+function isMobileView() {
+  return window.matchMedia("(max-width: 768px)").matches;
 }
 
 function updateSidebarMenuUI() {
@@ -786,6 +792,31 @@ function buildParcelRow(parcel, ownerName, className = "") {
   return tr;
 }
 
+function buildParcelCard(parcel, ownerName, className) {
+  const tw = getTaiwanIdForParcel(parcel);
+  const div = document.createElement("div");
+  div.className = "parcel-card " + (className || "");
+  div.innerHTML = `
+    <label class="parcel-card-check"><input type="checkbox" data-parcel-id="${parcel.id}" ${state.selectedParcelIds.has(parcel.id) ? "checked" : ""}></label>
+    <div class="parcel-card-body">
+      <div class="parcel-card-tracking"><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></div>
+      <div class="parcel-card-meta">
+        <span>${ownerName || "-"}</span>
+        <span class="status-tag status-${parcel.status}">${STATUS_LABEL[parcel.status] || parcel.status}</span>
+        <span>${Number(parcel.weight_kg || 0).toFixed(2)}kg</span>
+      </div>
+      ${parcel.remark ? '<div class="parcel-card-remark">' + parcel.remark + "</div>" : ""}
+      ${tw ? '<div class="parcel-card-tw">台灣: ' + tw + "</div>" : ""}
+      <div class="parcel-card-date">${formatDateOnly(parcel.shipped_to_taiwan_time || parcel.arrived_at_warehouse_time || parcel.created_at)}</div>
+      <div class="button-row tight">
+        <button class="btn small" data-copy-one="${parcel.id}">複製</button>
+        <button class="btn danger small" data-delete-parcel="${parcel.id}">刪除</button>
+      </div>
+    </div>
+  `;
+  return div;
+}
+
 function renderParcelRows() {
   const scopedRows = [];
   getScopeFriends().forEach((friend) => {
@@ -859,6 +890,62 @@ function renderParcelRows() {
     ...(hideShipped ? [] : shippedRows.map((row) => row.parcel.id))
   ];
   els.selectAll.checked = visibleIds.length > 0 && visibleIds.every((id) => state.selectedParcelIds.has(id));
+  if (els.selectAllMobile) els.selectAllMobile.checked = els.selectAll.checked;
+
+  // Mobile card view
+  if (els.parcelCardList) {
+    els.parcelCardList.innerHTML = "";
+    if (isMobileView()) {
+      activeRows.forEach(({ friend, parcel }) => {
+        els.parcelCardList.appendChild(buildParcelCard(parcel, friend.name));
+      });
+      if (shippedRows.length) {
+        const divider = document.createElement("div");
+        divider.className = "parcel-card-divider";
+        divider.innerHTML = '<button class="collapse-toggle" data-toggle-shipped-mobile>' + (hideShipped ? "\u5c55\u958b" : "\u6536\u8d77") + ' \u5df2\u51fa\u8f49\u904b\u5230\u53f0\u7063 (' + shippedRows.length + ')</button>';
+        els.parcelCardList.appendChild(divider);
+        if (!hideShipped) {
+          shippedRows.forEach(({ friend, parcel }) => {
+            els.parcelCardList.appendChild(buildParcelCard(parcel, friend.name, "shipped-row"));
+          });
+        }
+      }
+      if (!scopedRows.length) {
+        const empty = document.createElement("div");
+        empty.className = "parcel-card-empty";
+        empty.textContent = "\u6c92\u6709\u7b26\u5408\u689d\u4ef6\u7684\u55ae\u865f";
+        els.parcelCardList.appendChild(empty);
+      }
+      els.parcelCardList.querySelectorAll("input[data-parcel-id]").forEach((cb) => {
+        cb.addEventListener("change", (e) => {
+          const id = e.target.getAttribute("data-parcel-id");
+          if (e.target.checked) state.selectedParcelIds.add(id);
+          else state.selectedParcelIds.delete(id);
+        });
+      });
+      els.parcelCardList.querySelectorAll("button[data-edit-id]").forEach((btn) => {
+        btn.addEventListener("click", () => editParcel(btn.getAttribute("data-edit-id")));
+      });
+      els.parcelCardList.querySelectorAll("button[data-copy-one]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-copy-one");
+          const owner = findParcelOwnerById(id);
+          if (owner?.parcel) copyText(owner.parcel.tracking_id_china);
+        });
+      });
+      els.parcelCardList.querySelectorAll("button[data-delete-parcel]").forEach((btn) => {
+        btn.addEventListener("click", () => deleteParcel(btn.getAttribute("data-delete-parcel")));
+      });
+      const mobileToggle = els.parcelCardList.querySelector("button[data-toggle-shipped-mobile]");
+      if (mobileToggle) {
+        mobileToggle.addEventListener("click", () => {
+          state.shippedCollapsed = !state.shippedCollapsed;
+          renderParcelRows();
+        });
+      }
+    }
+  }
+
   if (els.parcelCountText) els.parcelCountText.textContent = `\u76ee\u524d\u5171 ${scopedRows.length} \u7b46\u55ae\u865f`;
 }
 
@@ -1178,6 +1265,7 @@ async function init() {
   });
 
   els.selectAll.addEventListener("change", (e) => toggleSelectAll(e.target.checked));
+  if (els.selectAllMobile) els.selectAllMobile.addEventListener("change", (e) => toggleSelectAll(e.target.checked));
   if (els.markArrivedBtn) els.markArrivedBtn.addEventListener("click", markSelectedArrived);
   els.markShippedBtn.addEventListener("click", markSelectedShipped);
   els.copyChinaBtn.addEventListener("click", copySelectedChina);

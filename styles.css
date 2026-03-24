@@ -466,3 +466,60 @@ th, td {
 .shipped-copy-btn {
   margin-top: 8px;
 }
+
+.parcel-card-list { display: none; }
+.mobile-select-row { display: none; }
+
+@media (max-width: 768px) {
+  .table-wrap { display: none; }
+  .parcel-card-list { display: grid; gap: 8px; margin-top: 8px; }
+  .mobile-select-row { display: block; margin-top: 8px; font-size: 14px; }
+  .mobile-select-row label { display: flex; align-items: center; gap: 6px; }
+
+  .parcel-card {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 8px;
+    align-items: start;
+  }
+
+  .parcel-card.shipped-row { background: #fafcff; }
+
+  .parcel-card-check { display: flex; align-items: center; padding-top: 2px; }
+  .parcel-card-check input { width: 18px; height: 18px; }
+
+  .parcel-card-body { display: grid; gap: 4px; }
+
+  .parcel-card-tracking { font-weight: 600; }
+  .parcel-card-tracking .link-btn { font-size: 15px; }
+
+  .parcel-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 13px;
+    color: #4b5563;
+  }
+
+  .parcel-card-remark { font-size: 13px; color: #374151; }
+  .parcel-card-tw { font-size: 13px; color: var(--primary); }
+  .parcel-card-date { font-size: 12px; color: var(--muted); }
+
+  .parcel-card .button-row { margin-top: 4px; }
+  .parcel-card .btn.small { min-height: 32px; }
+
+  .parcel-card-divider {
+    text-align: center;
+    padding: 8px 0;
+  }
+
+  .parcel-card-empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 20px;
+  }
+}
