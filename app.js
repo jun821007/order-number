@@ -60,7 +60,6 @@ const els = {
   shippedTitle: document.getElementById("shippedTitle"),
   shippedTaiwanSearch: document.getElementById("shippedTaiwanSearch"),
   shippedSummaryList: document.getElementById("shippedSummaryList"),
-  copyShippedSummaryBtn: document.getElementById("copyShippedSummaryBtn"),
 
   persistenceBadge: document.getElementById("persistenceBadge"),
   friendMenuBtn: document.getElementById("friendMenuBtn"),
@@ -84,8 +83,7 @@ const state = {
   tableOwnerFilter: "all",
   bulkInboundCopyText: "",
   bulkShipCopyText: "",
-  sidebarMenuOpen: false,
-  shippedSummaryCopyText: ""
+  sidebarMenuOpen: false
 };
 
 const STATUS_LABEL = {
@@ -145,12 +143,12 @@ function updateBulkAddAvailability() {
   els.bulkAddBtn.disabled = !state.bulkTargetFriendId;
 }
 
-function isTabletLandscapeMode() {
-  return window.matchMedia("(min-width: 900px) and (max-width: 1366px) and (orientation: landscape)").matches;
+function shouldUseSidebarDrawer() {
+  return window.matchMedia("(max-width: 1100px), (min-width: 900px) and (max-width: 1366px) and (orientation: landscape)").matches;
 }
 
 function updateSidebarMenuUI() {
-  const useDrawer = isTabletLandscapeMode();
+  const useDrawer = shouldUseSidebarDrawer();
   if (!els.friendMenuBtn || !els.sidebar || !els.sidebarBackdrop) return;
 
   els.friendMenuBtn.classList.toggle("hidden", !useDrawer);
@@ -920,7 +918,6 @@ function renderShippedSummary() {
   els.shippedSummaryList.innerHTML = "";
 
   if (!groups.length) {
-    state.shippedSummaryCopyText = "";
     els.shippedSummaryList.textContent = "目前沒有符合條件的已轉出資料。";
     return;
   }
@@ -934,8 +931,6 @@ function renderShippedSummary() {
   totalEl.textContent = `合計重量: ${totalWeight.toFixed(2)}kg`;
   els.shippedSummaryList.appendChild(totalEl);
 
-  const copyLines = [];
-
   groups.forEach((group) => {
     const detail = document.createElement("details");
     detail.className = "shipped-group";
@@ -944,24 +939,36 @@ function renderShippedSummary() {
     summary.textContent = `台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`;
     detail.appendChild(summary);
 
+    const groupWeight = group.items.reduce((sum, item) => sum + item.weight, 0);
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "btn small shipped-copy-btn";
+    copyBtn.textContent = "複製此單號內容";
+    copyBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const lines = [
+        `台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`,
+        ...group.items.map((item) => `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName} | ${item.date}`)
+      ];
+      lines.push("");
+      lines.push(`此單號合計重量: ${groupWeight.toFixed(2)}kg`);
+      copyText(lines.join("\n"));
+    });
+
     const ul = document.createElement("ul");
     ul.className = "shipped-group-items";
-
-    copyLines.push(`台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`);
 
     group.items.forEach((item) => {
       const li = document.createElement("li");
       li.textContent = `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName} | ${item.date}`;
       ul.appendChild(li);
-      copyLines.push(`  ${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName} | ${item.date}`);
     });
 
+    detail.appendChild(copyBtn);
     detail.appendChild(ul);
     els.shippedSummaryList.appendChild(detail);
   });
-
-  copyLines.push(`\n合計重量: ${totalWeight.toFixed(2)}kg`);
-  state.shippedSummaryCopyText = copyLines.join("\n");
 }
 
 function renderFriendPanel() {
@@ -1103,7 +1110,7 @@ async function init() {
 
   if (els.friendMenuBtn) {
     els.friendMenuBtn.addEventListener("click", () => {
-      if (!isTabletLandscapeMode()) return;
+      if (!shouldUseSidebarDrawer()) return;
       state.sidebarMenuOpen = !state.sidebarMenuOpen;
       if (state.sidebarMenuOpen) {
         state.friendListCollapsed = false;
@@ -1118,7 +1125,7 @@ async function init() {
   }
 
   window.addEventListener("resize", () => {
-    if (!isTabletLandscapeMode()) state.sidebarMenuOpen = false;
+    if (!shouldUseSidebarDrawer()) state.sidebarMenuOpen = false;
     updateSidebarMenuUI();
   });
 
@@ -1180,10 +1187,6 @@ async function init() {
     els.shippedTaiwanSearch.addEventListener("input", renderShippedSummary);
   }
 
-  els.copyShippedSummaryBtn.addEventListener("click", () => {
-    if (!state.shippedSummaryCopyText) return toast("目前沒有可複製的已轉出資料");
-    copyText(state.shippedSummaryCopyText);
-  });
 
   render();
 }

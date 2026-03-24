@@ -309,10 +309,38 @@ th, td {
 }
 
 @media (max-width: 1100px) {
-  .layout { grid-template-columns: 1fr; }
-  .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+  .layout { grid-template-columns: 1fr; min-height: auto; }
+  .content { padding: 12px; }
+  .card { padding: 12px; margin-bottom: 10px; }
+  .button-row .btn { min-height: 38px; }
   .filters { min-width: 0; grid-template-columns: 1fr; }
-  .app-header { align-items: flex-start; flex-direction: column; }
+  .app-header { align-items: center; justify-content: space-between; flex-direction: row; padding: 12px; }
+  .app-header h1 { font-size: 20px; }
+  .app-header p { font-size: 12px; }
+
+  .friend-menu-btn {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(360px, 88vw);
+    z-index: 1200;
+    transform: translateX(-104%);
+    transition: transform 0.2s ease;
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
+    overflow: auto;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
 }
 
 .collapsible-card .card-toggle-header {
@@ -433,4 +461,8 @@ th, td {
 
 .shipped-group-items li {
   line-height: 1.6;
+}
+
+.shipped-copy-btn {
+  margin-top: 8px;
 }
