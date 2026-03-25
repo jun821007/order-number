@@ -390,11 +390,6 @@ th, td {
   font-size: 13px;
 }
 
-.friend-menu-btn {
-  display: none;
-  white-space: nowrap;
-}
-
 .sidebar-backdrop {
   position: fixed;
   inset: 0;
