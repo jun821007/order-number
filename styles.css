@@ -323,6 +323,11 @@ th, td {
     align-items: center;
   }
 
+  .friend-add-quick-btn {
+    display: inline-flex;
+    align-items: center;
+  }
+
   .sidebar {
     position: fixed;
     top: 0;
@@ -522,4 +527,21 @@ th, td {
     color: var(--muted);
     padding: 20px;
   }
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.friend-add-quick-btn {
+  display: none;
+}
+
+.shipped-group-footer {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #4b5563;
+  line-height: 1.5;
 }

@@ -18,6 +18,7 @@ const els = {
   friendListStateText: document.getElementById("friendListStateText"),
   friendListBody: document.getElementById("friendListBody"),
   addFriendBtn: document.getElementById("addFriendBtn"),
+  addFriendQuickBtn: document.getElementById("addFriendQuickBtn"),
   emptyState: document.getElementById("emptyState"),
   friendPanel: document.getElementById("friendPanel"),
 
@@ -972,7 +973,7 @@ function renderShippedSummary() {
     if (!taiwanId) return;
     if (keyword && !taiwanId.toLowerCase().includes(keyword)) return;
 
-    const shippedAt = parcel.shipped_to_taiwan_time || parcel.arrived_at_warehouse_time || parcel.created_at || "";
+    const shippedAt = parcel.shipped_to_taiwan_time || "";
     const ts = Number.isFinite(new Date(shippedAt).getTime()) ? new Date(shippedAt).getTime() : 0;
 
     if (!groupMap.has(taiwanId)) {
@@ -994,7 +995,6 @@ function renderShippedSummary() {
       weight: Number(parcel.weight_kg || 0),
       chinaTracking: parcel.tracking_id_china,
       ownerName: friend.name || "-",
-      date: formatDateOnly(shippedAt),
       ts
     });
   });
@@ -1036,10 +1036,11 @@ function renderShippedSummary() {
       e.stopPropagation();
       const lines = [
         `台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`,
-        ...group.items.map((item) => `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName} | ${item.date}`)
+        ...group.items.map((item) => `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName}`)
       ];
       lines.push("");
       lines.push(`此單號合計重量: ${groupWeight.toFixed(2)}kg`);
+      lines.push(`出貨時間: ${group.latestDate}`);
       copyText(lines.join("\n"));
     });
 
@@ -1048,12 +1049,17 @@ function renderShippedSummary() {
 
     group.items.forEach((item) => {
       const li = document.createElement("li");
-      li.textContent = `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName} | ${item.date}`;
+      li.textContent = `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName}`;
       ul.appendChild(li);
     });
 
+    const footer = document.createElement("div");
+    footer.className = "shipped-group-footer";
+    footer.innerHTML = `此單號合計重量: ${groupWeight.toFixed(2)}kg<br>出貨時間: ${group.latestDate}`;
+
     detail.appendChild(copyBtn);
     detail.appendChild(ul);
+    detail.appendChild(footer);
     els.shippedSummaryList.appendChild(detail);
   });
 }
@@ -1217,6 +1223,7 @@ async function init() {
   });
 
   els.addFriendBtn.addEventListener("click", addFriend);
+  if (els.addFriendQuickBtn) els.addFriendQuickBtn.addEventListener("click", addFriend);
 
   const toggleCardByBlankClick = (cardEl, stateKey) => {
     cardEl.addEventListener("click", (e) => {
