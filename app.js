@@ -18,7 +18,7 @@ const els = {
   friendListStateText: document.getElementById("friendListStateText"),
   friendListBody: document.getElementById("friendListBody"),
   addFriendBtn: document.getElementById("addFriendBtn"),
-  addFriendQuickBtn: document.getElementById("addFriendQuickBtn"),
+  backHomeBtn: document.getElementById("backHomeBtn"),
   emptyState: document.getElementById("emptyState"),
   friendPanel: document.getElementById("friendPanel"),
 
@@ -1223,7 +1223,7 @@ async function init() {
   });
 
   els.addFriendBtn.addEventListener("click", addFriend);
-  if (els.addFriendQuickBtn) els.addFriendQuickBtn.addEventListener("click", addFriend);
+  if (els.backHomeBtn) els.backHomeBtn.addEventListener("click", closeSidebarMenu);
 
   const toggleCardByBlankClick = (cardEl, stateKey) => {
     cardEl.addEventListener("click", (e) => {

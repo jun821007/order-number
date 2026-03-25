@@ -314,18 +314,14 @@ th, td {
   .card { padding: 12px; margin-bottom: 10px; }
   .button-row .btn { min-height: 38px; }
   .filters { min-width: 0; grid-template-columns: 1fr; }
-  .app-header { align-items: center; justify-content: space-between; flex-direction: row; padding: 12px; }
-  .app-header h1 { font-size: 20px; }
-  .app-header p { font-size: 12px; }
+  .app-header { align-items: center; justify-content: flex-start; flex-direction: row; gap: 10px; padding: 12px; }
+  .app-header-main h1 { font-size: 20px; margin: 0 0 2px; }
+  .app-header-main p { font-size: 12px; margin: 0; }
 
   .friend-menu-btn {
     display: inline-flex;
     align-items: center;
-  }
-
-  .friend-add-quick-btn {
-    display: inline-flex;
-    align-items: center;
+    min-height: 38px;
   }
 
   .sidebar {
@@ -529,19 +525,25 @@ th, td {
   }
 }
 
-.header-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.friend-add-quick-btn {
-  display: none;
-}
-
 .shipped-group-footer {
   margin-top: 6px;
   font-size: 13px;
   color: #4b5563;
   line-height: 1.5;
+}
+
+.app-header-main {
+  flex: 1;
+}
+
+.sidebar-nav-row {
+  margin: 6px 0 8px;
+}
+
+#backHomeBtn {
+  min-height: 36px;
+}
+
+@media (min-width: 1101px) {
+  .sidebar-nav-row { display: none; }
 }

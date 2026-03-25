@@ -10,15 +10,15 @@
   <meta name="apple-mobile-web-app-title" content="單號分類工具" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <title>單號分類工具</title>
-  <link rel="stylesheet" href="./styles.css?v=20260324-5" />
+  <link rel="stylesheet" href="./styles.css?v=20260324-6" />
 </head>
 <body>
   <header class="app-header">
-    <div>
+    <button id="friendMenuBtn" class="btn friend-menu-btn" type="button">選單</button>
+    <div class="app-header-main">
       <h1>單號分類工具</h1>
       <p>朋友單號管理、狀態追蹤、批量操作</p>
     </div>
-    <div class="header-actions"><button id="friendMenuBtn" class="btn friend-menu-btn" type="button">朋友列表</button><button id="addFriendQuickBtn" class="btn friend-add-quick-btn" type="button">新增朋友</button></div>
   </header>
 
   <main class="layout">
@@ -26,6 +26,9 @@
       <div id="friendListToggleArea" class="panel-title-row clickable-header">
         <h2>朋友列表</h2>
         <span id="friendListStateText" class="collapse-state">展開</span>
+      </div>
+      <div class="sidebar-nav-row">
+        <button id="backHomeBtn" class="btn">返回主頁面</button>
       </div>
       <div class="button-row tight">
         <button id="addFriendBtn" class="btn primary">新增朋友</button>
@@ -175,7 +178,7 @@
   <div id="sidebarBackdrop" class="sidebar-backdrop hidden"></div>
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./app-config.js?v=20260324-5"></script>
-  <script src="./app.js?v=20260324-5"></script>
+  <script src="./app-config.js?v=20260324-6"></script>
+  <script src="./app.js?v=20260324-6"></script>
 </body>
 </html>
