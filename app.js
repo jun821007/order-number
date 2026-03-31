@@ -60,8 +60,6 @@ const els = {
   copyChinaBtn: document.getElementById("copyChinaBtn"),
   copyChinaRemarkBtn: document.getElementById("copyChinaRemarkBtn"),
   copyTaiwanBtn: document.getElementById("copyTaiwanBtn"),
-  batchWeightInput: document.getElementById("batchWeightInput"),
-  applyBatchWeightBtn: document.getElementById("applyBatchWeightBtn"),
 
   shippedTitle: document.getElementById("shippedTitle"),
   shippedTaiwanSearch: document.getElementById("shippedTaiwanSearch"),
@@ -590,7 +588,7 @@ function runBulkInbound() {
           linkParcelToTaiwanGroup(parcel.id, "");
           parcel.taiwan_parcel_group_id = null;
         }
-        processed.push(`${Number(parcel.weight_kg || 0).toFixed(2)} ${parcel.tracking_id_china} ${ownerCode(friend.name)}`);
+        processed.push(`${Number(parcel.weight_kg || 0).toFixed(1)} ${parcel.tracking_id_china} ${ownerCode(friend.name)}`);
       });
       return;
     }
@@ -613,7 +611,7 @@ function runBulkInbound() {
       shipped_to_taiwan_time: null
     };
     ownerFriend.parcels.push(newParcel);
-    processed.push(`${Number(newParcel.weight_kg || 0).toFixed(2)} ${newParcel.tracking_id_china} ${ownerCode(ownerFriend.name)}`);
+    processed.push(`${Number(newParcel.weight_kg || 0).toFixed(1)} ${newParcel.tracking_id_china} ${ownerCode(ownerFriend.name)}`);
   });
 
   const output = [];
@@ -665,7 +663,7 @@ function runBulkShip() {
       parcel.taiwan_parcel_group_id = group.id;
       parcel.shipped_to_taiwan_time = now;
       linkParcelToTaiwanGroup(parcel.id, group.id);
-      processed.push(`${Number(parcel.weight_kg || 0).toFixed(2)} ${parcel.tracking_id_china} ${ownerCode(friend.name)}`);
+      processed.push(`${Number(parcel.weight_kg || 0).toFixed(1)} ${parcel.tracking_id_china} ${ownerCode(friend.name)}`);
     });
   });
 
@@ -792,29 +790,9 @@ function editParcel(parcelId) {
 function updateParcelWeight(parcelId, nextWeight, message = "") {
   const owner = findParcelOwnerById(parcelId);
   if (!owner || !Number.isFinite(nextWeight) || nextWeight < 0) return false;
-  owner.parcel.weight_kg = Number(nextWeight.toFixed(2));
+  owner.parcel.weight_kg = Number(nextWeight.toFixed(1));
   persistAndRender(message);
   return true;
-}
-
-function applyBatchWeightToSelected() {
-  if (!els.batchWeightInput) return;
-  const parsed = Number.parseFloat((els.batchWeightInput.value || "").trim());
-  if (!Number.isFinite(parsed) || parsed < 0) return toast("請輸入有效重量");
-
-  const selectedIds = [...state.selectedParcelIds];
-  if (!selectedIds.length) return toast("請先勾選單號");
-
-  let count = 0;
-  selectedIds.forEach((id) => {
-    const owner = findParcelOwnerById(id);
-    if (!owner) return;
-    owner.parcel.weight_kg = Number(parsed.toFixed(2));
-    count += 1;
-  });
-
-  if (!count) return toast("沒有可更新的單號");
-  persistAndRender(`已批量更新 ${count} 筆重量`);
 }
 
 function updateParcelStatus(parcelId, nextStatus, message = "") {
@@ -865,7 +843,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
     <td>${ownerName || "-"}</td>
     <td><select class="${getStatusSelectClass(parcel.status)}" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select></td>
     <td>${PRIORITY_LABEL[parcel.shipping_priority] || parcel.shipping_priority}</td>
-    <td><input class="weight-input" type="number" min="0" step="0.01" value="${Number(parcel.weight_kg || 0).toFixed(2)}" data-weight-id="${parcel.id}"></td>
+    <td><input class="weight-input" type="number" min="0" step="0.1" value="${Number(parcel.weight_kg || 0).toFixed(1)}" data-weight-id="${parcel.id}"></td>
     <td>${tw || "-"}</td>
     <td>${historySummary(parcel)}</td>
     <td>
@@ -892,7 +870,7 @@ function buildParcelCard(parcel, ownerName, className) {
       </div>
       <div class="mobile-weight-editor">
         <label>重量(kg)</label>
-        <input class="weight-input" type="number" min="0" step="0.01" value="${Number(parcel.weight_kg || 0).toFixed(2)}" data-weight-id="${parcel.id}">
+        <input class="weight-input" type="number" min="0" step="0.1" value="${Number(parcel.weight_kg || 0).toFixed(1)}" data-weight-id="${parcel.id}">
       </div>
       ${parcel.remark ? '<div class="parcel-card-remark">' + parcel.remark + "</div>" : ""}
       ${tw ? '<div class="parcel-card-tw">台灣: ' + tw + "</div>" : ""}
@@ -1141,7 +1119,7 @@ function renderShippedSummary() {
 
   const totalEl = document.createElement("div");
   totalEl.className = "shipped-summary-total";
-  totalEl.textContent = `合計重量: ${totalWeight.toFixed(2)}kg`;
+  totalEl.textContent = `合計重量: ${totalWeight.toFixed(1)}kg`;
   els.shippedSummaryList.appendChild(totalEl);
 
   groups.forEach((group) => {
@@ -1162,10 +1140,10 @@ function renderShippedSummary() {
       e.stopPropagation();
       const lines = [
         `台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`,
-        ...group.items.map((item) => `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName}`)
+        ...group.items.map((item) => `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`)
       ];
       lines.push("");
-      lines.push(`此單號合計重量: ${groupWeight.toFixed(2)}kg`);
+      lines.push(`此單號合計重量: ${groupWeight.toFixed(1)}kg`);
       lines.push(`出貨時間: ${group.latestDate}`);
       copyText(lines.join("\n"));
     });
@@ -1175,13 +1153,13 @@ function renderShippedSummary() {
 
     group.items.forEach((item) => {
       const li = document.createElement("li");
-      li.textContent = `${item.weight.toFixed(2)} ${item.chinaTracking} ${item.ownerName}`;
+      li.textContent = `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`;
       ul.appendChild(li);
     });
 
     const footer = document.createElement("div");
     footer.className = "shipped-group-footer";
-    footer.innerHTML = `此單號合計重量: ${groupWeight.toFixed(2)}kg<br>出貨時間: ${group.latestDate}`;
+    footer.innerHTML = `此單號合計重量: ${groupWeight.toFixed(1)}kg<br>出貨時間: ${group.latestDate}`;
 
     detail.appendChild(copyBtn);
     detail.appendChild(ul);
@@ -1406,7 +1384,6 @@ async function init() {
   els.copyChinaBtn.addEventListener("click", copySelectedChina);
   if (els.copyChinaRemarkBtn) els.copyChinaRemarkBtn.addEventListener("click", copySelectedChinaWithRemark);
   els.copyTaiwanBtn.addEventListener("click", copySelectedTaiwan);
-  if (els.applyBatchWeightBtn) els.applyBatchWeightBtn.addEventListener("click", applyBatchWeightToSelected);
   if (els.shippedTaiwanSearch) {
     els.shippedTaiwanSearch.addEventListener("input", renderShippedSummary);
   }

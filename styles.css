@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #f4f6fb;
   --card: #ffffff;
   --text: #111827;
@@ -204,23 +204,6 @@ th, td {
 
 .button-row.tight { margin-top: 0; }
 .button-row.wrap { flex-wrap: wrap; }
-
-.batch-weight-row {
-  margin-top: 10px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.batch-weight-row label {
-  color: #374151;
-  font-size: 13px;
-}
-
-.batch-weight-row input {
-  width: 150px;
-}
 
 .weight-input {
   min-width: 92px;
