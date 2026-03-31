@@ -230,6 +230,27 @@ th, td {
   min-width: 128px;
   padding: 4px 6px;
   font-size: 13px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  font-weight: 600;
+}
+
+.status-select-pending_arrival {
+  background: #fff7ed;
+  color: #b45309;
+  border-color: #fdba74;
+}
+
+.status-select-arrived_at_warehouse {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #6ee7b7;
+}
+
+.status-select-shipped_to_taiwan {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #93c5fd;
 }
 
 .selected-count {

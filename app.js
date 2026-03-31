@@ -104,6 +104,10 @@ function buildStatusOptions(selected) {
     .join("");
 }
 
+function getStatusSelectClass(status) {
+  return `status-select status-select-${status}`;
+}
+
 const PRIORITY_LABEL = {
   normal: "一般",
   priority: "急"
@@ -859,7 +863,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
     <td><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></td>
     <td>${parcel.remark || "-"}</td>
     <td>${ownerName || "-"}</td>
-    <td><select class="status-select" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select></td>
+    <td><select class="${getStatusSelectClass(parcel.status)}" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select></td>
     <td>${PRIORITY_LABEL[parcel.shipping_priority] || parcel.shipping_priority}</td>
     <td><input class="weight-input" type="number" min="0" step="0.01" value="${Number(parcel.weight_kg || 0).toFixed(2)}" data-weight-id="${parcel.id}"></td>
     <td>${tw || "-"}</td>
@@ -884,7 +888,7 @@ function buildParcelCard(parcel, ownerName, className) {
       <div class="parcel-card-tracking"><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></div>
       <div class="parcel-card-meta">
         <span>${ownerName || "-"}</span>
-        <select class="status-select" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select>
+        <select class="${getStatusSelectClass(parcel.status)}" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select>
       </div>
       <div class="mobile-weight-editor">
         <label>重量(kg)</label>
@@ -991,11 +995,8 @@ function renderParcelRows() {
     });
   }
 
-  const visibleIds = [
-    ...activeRows.map((row) => row.parcel.id),
-    ...(hideShipped ? [] : shippedRows.map((row) => row.parcel.id))
-  ];
-  els.selectAll.checked = visibleIds.length > 0 && visibleIds.every((id) => state.selectedParcelIds.has(id));
+  const selectableIds = activeRows.map((row) => row.parcel.id);
+  els.selectAll.checked = selectableIds.length > 0 && selectableIds.every((id) => state.selectedParcelIds.has(id));
   if (els.selectAllMobile) els.selectAllMobile.checked = els.selectAll.checked;
 
   // Mobile card view
@@ -1297,7 +1298,9 @@ function copySelectedTaiwan() {
 function toggleSelectAll(checked) {
   const rows = [];
   getScopeFriends().forEach((friend) => {
-    getFilteredParcels(friend).forEach((parcel) => rows.push(parcel));
+    getFilteredParcels(friend)
+      .filter((parcel) => parcel.status !== "shipped_to_taiwan")
+      .forEach((parcel) => rows.push(parcel));
   });
   rows.forEach((parcel) => {
     if (checked) state.selectedParcelIds.add(parcel.id);
