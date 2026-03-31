@@ -51,6 +51,7 @@ const els = {
   priorityFilter: document.getElementById("priorityFilter"),
   selectAll: document.getElementById("selectAll"),
   selectAllMobile: document.getElementById("selectAllMobile"),
+  selectedCountText: document.getElementById("selectedCountText"),
   parcelTbody: document.getElementById("parcelTbody"),
   parcelCardList: document.getElementById("parcelCardList"),
   parcelCountText: document.getElementById("parcelCountText"),
@@ -96,6 +97,12 @@ const STATUS_LABEL = {
   arrived_at_warehouse: "已到集運倉",
   shipped_to_taiwan: "已出轉運台灣"
 };
+
+function buildStatusOptions(selected) {
+  return ["pending_arrival", "arrived_at_warehouse", "shipped_to_taiwan"]
+    .map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${STATUS_LABEL[value]}</option>`)
+    .join("");
+}
 
 const PRIORITY_LABEL = {
   normal: "一般",
@@ -547,7 +554,6 @@ function addBulkParcels() {
 
 function runBulkInbound() {
   const ownerFriend = state.data.friends.find((f) => f.id === state.bulkInboundOwnerFriendId);
-  if (!ownerFriend) return toast("請先在入庫區塊選擇件主");
 
   const lines = els.bulkInboundInput.value.split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return toast("請先輸入批量入庫資料");
@@ -558,6 +564,7 @@ function runBulkInbound() {
 
   const processed = [];
   const invalid = [];
+  const skippedNoOwner = [];
 
   lines.forEach((line) => {
     if (/^合計|^合计|^total/i.test(line.replace(/\s+/g, ""))) return;
@@ -581,22 +588,28 @@ function runBulkInbound() {
         }
         processed.push(`${Number(parcel.weight_kg || 0).toFixed(2)} ${parcel.tracking_id_china} ${ownerCode(friend.name)}`);
       });
-    } else {
-      const newParcel = {
-        id: uid(),
-        tracking_id_china: tracking,
-        remark: "",
-        status: "arrived_at_warehouse",
-        shipping_priority: priority,
-        weight_kg: Number.isFinite(weight) ? weight : 0,
-        taiwan_parcel_group_id: null,
-        created_at: now,
-        arrived_at_warehouse_time: now,
-        shipped_to_taiwan_time: null
-      };
-      ownerFriend.parcels.push(newParcel);
-      processed.push(`${Number(newParcel.weight_kg || 0).toFixed(2)} ${newParcel.tracking_id_china} ${ownerCode(ownerFriend.name)}`);
+      return;
     }
+
+    if (!ownerFriend) {
+      skippedNoOwner.push(tracking);
+      return;
+    }
+
+    const newParcel = {
+      id: uid(),
+      tracking_id_china: tracking,
+      remark: "",
+      status: "arrived_at_warehouse",
+      shipping_priority: priority,
+      weight_kg: Number.isFinite(weight) ? weight : 0,
+      taiwan_parcel_group_id: null,
+      created_at: now,
+      arrived_at_warehouse_time: now,
+      shipped_to_taiwan_time: null
+    };
+    ownerFriend.parcels.push(newParcel);
+    processed.push(`${Number(newParcel.weight_kg || 0).toFixed(2)} ${newParcel.tracking_id_china} ${ownerCode(ownerFriend.name)}`);
   });
 
   const output = [];
@@ -604,13 +617,14 @@ function runBulkInbound() {
     output.push(processed.join("\n"));
     output.push(`\n合計 ${processed.length} 件`);
   }
+  if (skippedNoOwner.length) output.push(`\n找不到且未指定件主：${skippedNoOwner.join(", ")}`);
   if (invalid.length) output.push(`\n格式錯誤：\n${invalid.join("\n")}`);
 
   els.bulkInboundResult.textContent = output.join("\n").trim() || "沒有可處理資料";
   state.bulkInboundCopyText = processed.join("\n");
 
   if (processed.length) {
-    state.selectedFriendId = ownerFriend.id;
+    if (ownerFriend) state.selectedFriendId = ownerFriend.id;
     persistAndRender(`已批量入庫 ${processed.length} 件`);
   } else {
     render();
@@ -799,6 +813,43 @@ function applyBatchWeightToSelected() {
   persistAndRender(`已批量更新 ${count} 筆重量`);
 }
 
+function updateParcelStatus(parcelId, nextStatus, message = "") {
+  const owner = findParcelOwnerById(parcelId);
+  if (!owner || !STATUS_LABEL[nextStatus]) return false;
+
+  const { parcel } = owner;
+  parcel.status = nextStatus;
+
+  if (nextStatus === "pending_arrival") {
+    if (parcel.taiwan_parcel_group_id) {
+      linkParcelToTaiwanGroup(parcel.id, "");
+      parcel.taiwan_parcel_group_id = null;
+    }
+    parcel.shipped_to_taiwan_time = null;
+  }
+
+  if (nextStatus === "arrived_at_warehouse") {
+    if (!parcel.arrived_at_warehouse_time) parcel.arrived_at_warehouse_time = nowIso();
+    if (parcel.taiwan_parcel_group_id) {
+      linkParcelToTaiwanGroup(parcel.id, "");
+      parcel.taiwan_parcel_group_id = null;
+    }
+    parcel.shipped_to_taiwan_time = null;
+  }
+
+  if (nextStatus === "shipped_to_taiwan") {
+    if (!parcel.shipped_to_taiwan_time) parcel.shipped_to_taiwan_time = nowIso();
+  }
+
+  persistAndRender(message);
+  return true;
+}
+
+function updateSelectedCountUI() {
+  if (!els.selectedCountText) return;
+  els.selectedCountText.textContent = `已選 ${state.selectedParcelIds.size}`;
+}
+
 function buildParcelRow(parcel, ownerName, className = "") {
   const tr = document.createElement("tr");
   if (className) tr.className = className;
@@ -808,7 +859,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
     <td><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></td>
     <td>${parcel.remark || "-"}</td>
     <td>${ownerName || "-"}</td>
-    <td><span class="status-tag status-${parcel.status}">${STATUS_LABEL[parcel.status] || parcel.status}</span></td>
+    <td><select class="status-select" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select></td>
     <td>${PRIORITY_LABEL[parcel.shipping_priority] || parcel.shipping_priority}</td>
     <td><input class="weight-input" type="number" min="0" step="0.01" value="${Number(parcel.weight_kg || 0).toFixed(2)}" data-weight-id="${parcel.id}"></td>
     <td>${tw || "-"}</td>
@@ -833,7 +884,7 @@ function buildParcelCard(parcel, ownerName, className) {
       <div class="parcel-card-tracking"><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></div>
       <div class="parcel-card-meta">
         <span>${ownerName || "-"}</span>
-        <span class="status-tag status-${parcel.status}">${STATUS_LABEL[parcel.status] || parcel.status}</span>
+        <select class="status-select" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select>
       </div>
       <div class="mobile-weight-editor">
         <label>重量(kg)</label>
@@ -892,6 +943,14 @@ function renderParcelRows() {
       const id = e.target.getAttribute("data-parcel-id");
       if (e.target.checked) state.selectedParcelIds.add(id);
       else state.selectedParcelIds.delete(id);
+      updateSelectedCountUI();
+    });
+  });
+
+  els.parcelTbody.querySelectorAll("select[data-status-id]").forEach((select) => {
+    select.addEventListener("change", (e) => {
+      const id = e.target.getAttribute("data-status-id");
+      updateParcelStatus(id, e.target.value, "");
     });
   });
 
@@ -968,6 +1027,13 @@ function renderParcelRows() {
           const id = e.target.getAttribute("data-parcel-id");
           if (e.target.checked) state.selectedParcelIds.add(id);
           else state.selectedParcelIds.delete(id);
+          updateSelectedCountUI();
+        });
+      });
+      els.parcelCardList.querySelectorAll("select[data-status-id]").forEach((select) => {
+        select.addEventListener("change", (e) => {
+          const id = e.target.getAttribute("data-status-id");
+          updateParcelStatus(id, e.target.value, "");
         });
       });
       els.parcelCardList.querySelectorAll("button[data-edit-id]").forEach((btn) => {
@@ -1006,6 +1072,7 @@ function renderParcelRows() {
   }
 
   if (els.parcelCountText) els.parcelCountText.textContent = `\u76ee\u524d\u5171 ${scopedRows.length} \u7b46\u55ae\u865f`;
+  updateSelectedCountUI();
 }
 
 function renderShippedSummary() {

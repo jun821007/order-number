@@ -226,6 +226,17 @@ th, td {
   min-width: 92px;
 }
 
+.status-select {
+  min-width: 128px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.selected-count {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .hidden { display: none; }
 
 .empty-state {
@@ -496,7 +507,11 @@ th, td {
   .table-wrap { display: none; }
   .parcel-card-list { display: grid; gap: 8px; margin-top: 8px; }
   .mobile-select-row { display: block; margin-top: 8px; font-size: 14px; }
-  .mobile-select-row label { display: flex; align-items: center; gap: 6px; }
+  .mobile-select-row label { display: inline-flex; align-items: center; gap: 6px; }
+  .select-all-inline { justify-content: flex-start; }
+
+  .select-all-inline input { width: 18px; height: 18px; }
+
 
   .parcel-card {
     border: 1px solid var(--line);
