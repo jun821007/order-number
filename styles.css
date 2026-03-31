@@ -308,6 +308,11 @@ th, td {
   border-radius: 8px;
 }
 
+.friend-menu-btn {
+  display: none;
+  white-space: nowrap;
+}
+
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 1fr; min-height: auto; }
   .content { padding: 12px; }

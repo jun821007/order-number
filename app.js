@@ -156,9 +156,9 @@ function isMobileView() {
 
 function updateSidebarMenuUI() {
   const useDrawer = shouldUseSidebarDrawer();
-  if (!els.friendMenuBtn || !els.sidebar || !els.sidebarBackdrop) return;
+  if (!els.sidebar || !els.sidebarBackdrop) return;
 
-  els.friendMenuBtn.classList.toggle("hidden", !useDrawer);
+  if (!useDrawer) state.sidebarMenuOpen = false;
   els.sidebar.classList.toggle("open", useDrawer && state.sidebarMenuOpen);
   els.sidebarBackdrop.classList.toggle("hidden", !(useDrawer && state.sidebarMenuOpen));
 }
