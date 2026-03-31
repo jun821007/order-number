@@ -59,6 +59,8 @@ const els = {
   copyChinaBtn: document.getElementById("copyChinaBtn"),
   copyChinaRemarkBtn: document.getElementById("copyChinaRemarkBtn"),
   copyTaiwanBtn: document.getElementById("copyTaiwanBtn"),
+  batchWeightInput: document.getElementById("batchWeightInput"),
+  applyBatchWeightBtn: document.getElementById("applyBatchWeightBtn"),
 
   shippedTitle: document.getElementById("shippedTitle"),
   shippedTaiwanSearch: document.getElementById("shippedTaiwanSearch"),
@@ -769,6 +771,34 @@ function editParcel(parcelId) {
   persistAndRender("已更新單號");
 }
 
+function updateParcelWeight(parcelId, nextWeight, message = "") {
+  const owner = findParcelOwnerById(parcelId);
+  if (!owner || !Number.isFinite(nextWeight) || nextWeight < 0) return false;
+  owner.parcel.weight_kg = Number(nextWeight.toFixed(2));
+  persistAndRender(message);
+  return true;
+}
+
+function applyBatchWeightToSelected() {
+  if (!els.batchWeightInput) return;
+  const parsed = Number.parseFloat((els.batchWeightInput.value || "").trim());
+  if (!Number.isFinite(parsed) || parsed < 0) return toast("請輸入有效重量");
+
+  const selectedIds = [...state.selectedParcelIds];
+  if (!selectedIds.length) return toast("請先勾選單號");
+
+  let count = 0;
+  selectedIds.forEach((id) => {
+    const owner = findParcelOwnerById(id);
+    if (!owner) return;
+    owner.parcel.weight_kg = Number(parsed.toFixed(2));
+    count += 1;
+  });
+
+  if (!count) return toast("沒有可更新的單號");
+  persistAndRender(`已批量更新 ${count} 筆重量`);
+}
+
 function buildParcelRow(parcel, ownerName, className = "") {
   const tr = document.createElement("tr");
   if (className) tr.className = className;
@@ -780,7 +810,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
     <td>${ownerName || "-"}</td>
     <td><span class="status-tag status-${parcel.status}">${STATUS_LABEL[parcel.status] || parcel.status}</span></td>
     <td>${PRIORITY_LABEL[parcel.shipping_priority] || parcel.shipping_priority}</td>
-    <td>${Number(parcel.weight_kg || 0).toFixed(2)}</td>
+    <td><input class="weight-input" type="number" min="0" step="0.01" value="${Number(parcel.weight_kg || 0).toFixed(2)}" data-weight-id="${parcel.id}"></td>
     <td>${tw || "-"}</td>
     <td>${historySummary(parcel)}</td>
     <td>
@@ -804,7 +834,10 @@ function buildParcelCard(parcel, ownerName, className) {
       <div class="parcel-card-meta">
         <span>${ownerName || "-"}</span>
         <span class="status-tag status-${parcel.status}">${STATUS_LABEL[parcel.status] || parcel.status}</span>
-        <span>${Number(parcel.weight_kg || 0).toFixed(2)}kg</span>
+      </div>
+      <div class="mobile-weight-editor">
+        <label>重量(kg)</label>
+        <input class="weight-input" type="number" min="0" step="0.01" value="${Number(parcel.weight_kg || 0).toFixed(2)}" data-weight-id="${parcel.id}">
       </div>
       ${parcel.remark ? '<div class="parcel-card-remark">' + parcel.remark + "</div>" : ""}
       ${tw ? '<div class="parcel-card-tw">台灣: ' + tw + "</div>" : ""}
@@ -864,6 +897,19 @@ function renderParcelRows() {
 
   els.parcelTbody.querySelectorAll("button[data-edit-id]").forEach((btn) => {
     btn.addEventListener("click", () => editParcel(btn.getAttribute("data-edit-id")));
+  });
+
+  els.parcelTbody.querySelectorAll("input[data-weight-id]").forEach((input) => {
+    input.addEventListener("change", (e) => {
+      const id = e.target.getAttribute("data-weight-id");
+      const value = Number.parseFloat(e.target.value || "");
+      if (!Number.isFinite(value) || value < 0) {
+        toast("重量格式錯誤");
+        renderParcelRows();
+        return;
+      }
+      updateParcelWeight(id, value, "");
+    });
   });
 
   els.parcelTbody.querySelectorAll("button[data-copy-one]").forEach((btn) => {
@@ -926,6 +972,18 @@ function renderParcelRows() {
       });
       els.parcelCardList.querySelectorAll("button[data-edit-id]").forEach((btn) => {
         btn.addEventListener("click", () => editParcel(btn.getAttribute("data-edit-id")));
+      });
+      els.parcelCardList.querySelectorAll("input[data-weight-id]").forEach((input) => {
+        input.addEventListener("change", (e) => {
+          const id = e.target.getAttribute("data-weight-id");
+          const value = Number.parseFloat(e.target.value || "");
+          if (!Number.isFinite(value) || value < 0) {
+            toast("重量格式錯誤");
+            renderParcelRows();
+            return;
+          }
+          updateParcelWeight(id, value, "");
+        });
       });
       els.parcelCardList.querySelectorAll("button[data-copy-one]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1278,6 +1336,7 @@ async function init() {
   els.copyChinaBtn.addEventListener("click", copySelectedChina);
   if (els.copyChinaRemarkBtn) els.copyChinaRemarkBtn.addEventListener("click", copySelectedChinaWithRemark);
   els.copyTaiwanBtn.addEventListener("click", copySelectedTaiwan);
+  if (els.applyBatchWeightBtn) els.applyBatchWeightBtn.addEventListener("click", applyBatchWeightToSelected);
   if (els.shippedTaiwanSearch) {
     els.shippedTaiwanSearch.addEventListener("input", renderShippedSummary);
   }
