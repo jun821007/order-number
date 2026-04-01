@@ -236,6 +236,10 @@ th, td {
   border-color: #93c5fd;
 }
 
+.tw-display {
+  white-space: pre-line;
+}
+
 .selected-count {
   color: #64748b;
   font-size: 12px;
@@ -488,6 +492,7 @@ th, td {
   cursor: pointer;
   font-weight: 600;
   color: #1f2937;
+  white-space: pre-line;
 }
 
 .shipped-group-items {

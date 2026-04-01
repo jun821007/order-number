@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-title" content="單號分類工具" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <title>單號分類工具</title>
-  <link rel="stylesheet" href="./styles.css?v=20260326-7" />
+  <link rel="stylesheet" href="./styles.css?v=20260326-8" />
 </head>
 <body>
   <header class="app-header">
@@ -90,8 +90,8 @@
             <p class="helper-text">格式：`重量 中國單號`，可貼多行。`合計` 行會自動忽略。</p>
             <textarea id="bulkShipInput" rows="7" placeholder="0.3 SF1564337616824&#10;0.3 SF1564337616833&#10;0.1 78987614509664&#10;合計7"></textarea>
 
-            <label class="field-label" for="bulkShipTaiwanInput">台灣單號（可選，空白自動產生批次代碼）</label>
-            <input id="bulkShipTaiwanInput" type="text" placeholder="例如 TW1234567890" />
+            <label class="field-label" for="bulkShipTaiwanInput">台灣單號（可多行，空白自動產生批次代碼）</label>
+            <textarea id="bulkShipTaiwanInput" rows="3" placeholder="例如：\nTW1234567890\nTW1234567891"></textarea>
 
             <div class="button-row wrap">
               <button id="bulkShipBtn" class="btn primary">執行批量出轉運</button>
@@ -179,7 +179,7 @@
   <div id="sidebarBackdrop" class="sidebar-backdrop hidden"></div>
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./app-config.js?v=20260326-7"></script>
-  <script src="./app.js?v=20260326-7"></script>
+  <script src="./app-config.js?v=20260326-8"></script>
+  <script src="./app.js?v=20260326-8"></script>
 </body>
 </html>

@@ -106,6 +106,24 @@ function getStatusSelectClass(status) {
   return `status-select status-select-${status}`;
 }
 
+function parseTaiwanTrackingIds(raw) {
+  const lf = String.fromCharCode(10);
+  const cr = String.fromCharCode(13);
+  const normalized = (raw || "")
+    .replaceAll("，", ",")
+    .replaceAll(cr, lf);
+  const parts = normalized
+    .split(",")
+    .flatMap((part) => part.split(lf))
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return [...new Set(parts)];
+}
+
+function formatTaiwanTrackingDisplay(raw) {
+  return parseTaiwanTrackingIds(raw).join(String.fromCharCode(10));
+}
+
 const PRIORITY_LABEL = {
   normal: "一般",
   priority: "急"
@@ -637,8 +655,8 @@ function runBulkShip() {
   const lines = els.bulkShipInput.value.split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return toast("請先輸入批量出轉運資料");
 
-  const twInput = (els.bulkShipTaiwanInput.value || "").trim();
-  const batchTracking = twInput || `BATCH-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
+  const twList = parseTaiwanTrackingIds(els.bulkShipTaiwanInput.value || "");
+  const batchTracking = twList.length ? twList.join("\n") : `BATCH-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
   const group = upsertTaiwanGroupByTracking(batchTracking);
   const trackingIndex = buildTrackingIndex();
   const now = nowIso();
@@ -739,7 +757,7 @@ function editParcel(parcelId) {
   const statusInput = prompt("狀態(未到/已到/已出)：", parcel.status);
   const priorityInput = prompt("優先級(一般/急)：", PRIORITY_LABEL[parcel.shipping_priority] || "一般");
   const weightInput = prompt("重量(kg)：", String(parcel.weight_kg || 0));
-  const twInput = prompt("台灣單號(可留空解除綁定)：", getTaiwanIdForParcel(parcel));
+  const twInput = prompt("台灣單號(可留空解除綁定；可用逗號分隔多個)：", getTaiwanIdForParcel(parcel));
 
   const statusMap = {
     未到: "pending_arrival",
@@ -772,7 +790,8 @@ function editParcel(parcelId) {
   if (parcel.status === "arrived_at_warehouse" && !parcel.arrived_at_warehouse_time) parcel.arrived_at_warehouse_time = nowIso();
   if (parcel.status === "shipped_to_taiwan" && !parcel.shipped_to_taiwan_time) parcel.shipped_to_taiwan_time = nowIso();
 
-  const tw = (twInput || "").trim();
+  const twList = parseTaiwanTrackingIds(twInput || "");
+  const tw = twList.join("\n");
   if (!tw) {
     parcel.taiwan_parcel_group_id = null;
     linkParcelToTaiwanGroup(parcel.id, "");
@@ -835,7 +854,7 @@ function updateSelectedCountUI() {
 function buildParcelRow(parcel, ownerName, className = "") {
   const tr = document.createElement("tr");
   if (className) tr.className = className;
-  const tw = getTaiwanIdForParcel(parcel);
+  const tw = formatTaiwanTrackingDisplay(getTaiwanIdForParcel(parcel));
   tr.innerHTML = `
     <td><input type="checkbox" data-parcel-id="${parcel.id}" ${state.selectedParcelIds.has(parcel.id) ? "checked" : ""}></td>
     <td><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></td>
@@ -844,7 +863,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
     <td><select class="${getStatusSelectClass(parcel.status)}" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select></td>
     <td>${PRIORITY_LABEL[parcel.shipping_priority] || parcel.shipping_priority}</td>
     <td><input class="weight-input" type="number" min="0" step="0.1" value="${Number(parcel.weight_kg || 0).toFixed(1)}" data-weight-id="${parcel.id}"></td>
-    <td>${tw || "-"}</td>
+    <td><span class="tw-display">${tw || "-"}</span></td>
     <td>${historySummary(parcel)}</td>
     <td>
       <div class="button-row tight">
@@ -857,7 +876,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
 }
 
 function buildParcelCard(parcel, ownerName, className) {
-  const tw = getTaiwanIdForParcel(parcel);
+  const tw = formatTaiwanTrackingDisplay(getTaiwanIdForParcel(parcel));
   const div = document.createElement("div");
   div.className = "parcel-card " + (className || "");
   div.innerHTML = `
@@ -873,7 +892,7 @@ function buildParcelCard(parcel, ownerName, className) {
         <input class="weight-input" type="number" min="0" step="0.1" value="${Number(parcel.weight_kg || 0).toFixed(1)}" data-weight-id="${parcel.id}">
       </div>
       ${parcel.remark ? '<div class="parcel-card-remark">' + parcel.remark + "</div>" : ""}
-      ${tw ? '<div class="parcel-card-tw">台灣: ' + tw + "</div>" : ""}
+      ${tw ? '<div class="parcel-card-tw tw-display">台灣:\n' + tw + "</div>" : ""}
       <div class="parcel-card-date">${formatDateOnly(parcel.shipped_to_taiwan_time || parcel.arrived_at_warehouse_time || parcel.created_at)}</div>
       <div class="button-row tight">
         <button class="btn small" data-copy-one="${parcel.id}">複製</button>
@@ -1073,7 +1092,7 @@ function renderShippedSummary() {
   const groupMap = new Map();
 
   shippedRows.forEach(({ friend, parcel }) => {
-    const taiwanId = (getTaiwanIdForParcel(parcel) || "").trim();
+    const taiwanId = formatTaiwanTrackingDisplay(getTaiwanIdForParcel(parcel));
     if (!taiwanId) return;
     if (keyword && !taiwanId.toLowerCase().includes(keyword)) return;
 
@@ -1219,12 +1238,16 @@ function markSelectedShipped() {
       if (state.selectedParcelIds.has(parcel.id)) selected.push(parcel);
     });
   });
-  if (!selected.length) return toast("\u8acb\u5148\u52fe\u9078\u55ae\u865f");
+  if (!selected.length) return toast("請先勾選單號");
 
-  const trackingTaiwan = (prompt("\u8f38\u5165\u4e00\u500b\u53f0\u7063\u55ae\u865f(\u7559\u7a7a\u7565\u904e)\uff1a") || "").trim();
-  if (!trackingTaiwan) return toast("\u5df2\u7565\u904e\u64cd\u4f5c");
+  const hasPending = selected.some((parcel) => parcel.status === "pending_arrival");
+  if (hasPending && !confirm("選取中包含『未到集運倉』單號，確定仍要改為已出轉運嗎？")) return;
 
-  const group = upsertTaiwanGroupByTracking(trackingTaiwan);
+  const trackingTaiwanRaw = prompt("輸入台灣單號(留空略過；可用逗號分隔多個)：") || "";
+  const taiwanList = parseTaiwanTrackingIds(trackingTaiwanRaw);
+  if (!taiwanList.length) return toast("已略過操作");
+
+  const group = upsertTaiwanGroupByTracking(taiwanList.join(String.fromCharCode(10)));
   selected.forEach((parcel) => {
     parcel.status = "shipped_to_taiwan";
     parcel.taiwan_parcel_group_id = group.id;
@@ -1232,7 +1255,7 @@ function markSelectedShipped() {
     linkParcelToTaiwanGroup(parcel.id, group.id);
   });
 
-  persistAndRender("\u5df2\u66f4\u65b0\u70ba\u5df2\u51fa\u8f49\u904b");
+  persistAndRender("已更新為已出轉運");
 }
 
 function copySelectedChina() {
@@ -1264,8 +1287,8 @@ function copySelectedTaiwan() {
   state.data.friends.forEach((friend) => {
     friend.parcels.forEach((parcel) => {
       if (!state.selectedParcelIds.has(parcel.id)) return;
-      const tw = getTaiwanIdForParcel(parcel);
-      if (tw) taiwanIds.add(tw);
+      const tw = formatTaiwanTrackingDisplay(getTaiwanIdForParcel(parcel));
+      parseTaiwanTrackingIds(tw).forEach((id) => taiwanIds.add(id));
     });
   });
   const text = [...taiwanIds].join("\n");
