@@ -509,6 +509,33 @@ th, td {
   margin-top: 8px;
 }
 
+.shipped-owner-tools {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.shipped-owner-tools select,
+.shipped-owner-tools input {
+  width: auto;
+  min-width: 88px;
+  max-width: 130px;
+  padding: 5px 6px;
+  font-size: 12px;
+}
+
+.shipped-group-items .owner-divider {
+  list-style: none;
+  margin-top: 6px;
+  margin-left: -16px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
 .parcel-card-list { display: none; }
 .mobile-select-row { display: none; }
 

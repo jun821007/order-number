@@ -1074,6 +1074,7 @@ function renderParcelRows() {
 }
 
 function renderShippedSummary() {
+  const NL = String.fromCharCode(10);
   const shippedRows = [];
   getScopeFriends().forEach((friend) => {
     friend.parcels
@@ -1123,7 +1124,13 @@ function renderShippedSummary() {
   });
 
   const groups = [...groupMap.values()].sort((a, b) => b.latestTs - a.latestTs);
-  groups.forEach((group) => group.items.sort((a, b) => b.ts - a.ts));
+  groups.forEach((group) => {
+    group.items.sort((a, b) => {
+      const ownerOrder = (a.ownerName || "").localeCompare((b.ownerName || ""), "zh-TW");
+      if (ownerOrder !== 0) return ownerOrder;
+      return b.ts - a.ts;
+    });
+  });
 
   els.shippedSummaryList.innerHTML = "";
 
@@ -1132,13 +1139,14 @@ function renderShippedSummary() {
     return;
   }
 
+  const formatWeightText = (value) => Number(value || 0).toFixed(1).replace(/\.0$/, "");
   const totalWeight = groups.reduce((sum, group) => {
     return sum + group.items.reduce((sub, item) => sub + item.weight, 0);
   }, 0);
 
   const totalEl = document.createElement("div");
   totalEl.className = "shipped-summary-total";
-  totalEl.textContent = `合計重量: ${totalWeight.toFixed(1)}kg`;
+  totalEl.textContent = `合計重量: ${Number(totalWeight || 0).toFixed(1)}kg`;
   els.shippedSummaryList.appendChild(totalEl);
 
   groups.forEach((group) => {
@@ -1150,6 +1158,7 @@ function renderShippedSummary() {
     detail.appendChild(summary);
 
     const groupWeight = group.items.reduce((sum, item) => sum + item.weight, 0);
+
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "btn small shipped-copy-btn";
@@ -1162,15 +1171,102 @@ function renderShippedSummary() {
         ...group.items.map((item) => `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`)
       ];
       lines.push("");
-      lines.push(`此單號合計重量: ${groupWeight.toFixed(1)}kg`);
+      lines.push(`此單號合計重量: ${Number(groupWeight || 0).toFixed(1)}kg`);
       lines.push(`出貨時間: ${group.latestDate}`);
-      copyText(lines.join("\n"));
+      copyText(lines.join(NL));
     });
+
+    const ownerWeightMap = new Map();
+    group.items.forEach((item) => {
+      ownerWeightMap.set(item.ownerName, (ownerWeightMap.get(item.ownerName) || 0) + item.weight);
+    });
+    const ownerNames = [...ownerWeightMap.keys()];
+
+    const tools = document.createElement("div");
+    tools.className = "shipped-owner-tools";
+
+    const ownerSelect = document.createElement("select");
+    ownerNames.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      ownerSelect.appendChild(opt);
+    });
+
+    const ownerWeightInput = document.createElement("input");
+    ownerWeightInput.type = "number";
+    ownerWeightInput.min = "0";
+    ownerWeightInput.step = "0.1";
+
+    const feeInput = document.createElement("input");
+    feeInput.type = "number";
+    feeInput.min = "0";
+    feeInput.step = "1";
+    feeInput.placeholder = "輸入總運費";
+
+    const syncOwnerWeight = () => {
+      const selectedOwner = ownerSelect.value;
+      const ownerWeight = ownerWeightMap.get(selectedOwner) || 0;
+      ownerWeightInput.value = Number(ownerWeight || 0).toFixed(1);
+    };
+    syncOwnerWeight();
+    ownerSelect.addEventListener("change", syncOwnerWeight);
+
+    const copyOwnerBtn = document.createElement("button");
+    copyOwnerBtn.type = "button";
+    copyOwnerBtn.className = "btn small";
+    copyOwnerBtn.textContent = "複製件主單號";
+    copyOwnerBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const owner = ownerSelect.value;
+      const ownerItems = group.items.filter((item) => item.ownerName === owner);
+      if (!ownerItems.length) return toast("此件主沒有資料");
+      copyText(ownerItems.map((item) => `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`).join(NL));
+    });
+
+    const settleCopyBtn = document.createElement("button");
+    settleCopyBtn.type = "button";
+    settleCopyBtn.className = "btn small";
+    settleCopyBtn.textContent = "結算複製";
+    settleCopyBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const owner = ownerSelect.value;
+      const ownerItems = group.items.filter((item) => item.ownerName === owner);
+      if (!ownerItems.length) return toast("此件主沒有資料");
+
+      const totalFee = Number.parseFloat((feeInput.value || "").trim());
+      if (!Number.isFinite(totalFee) || totalFee < 0) return toast("請先輸入總運費");
+
+      const ownerWeight = Number.parseFloat((ownerWeightInput.value || "").trim());
+      if (!Number.isFinite(ownerWeight) || ownerWeight < 0) return toast("件主總重格式錯誤");
+
+      if (groupWeight <= 0) return toast("此包裹總重為 0，無法結算");
+
+      const unitPrice = totalFee / groupWeight;
+      const ownerFee = unitPrice * ownerWeight;
+      const lines = ownerItems.map((item) => `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`);
+      lines.push(`總重${formatWeightText(ownerWeight)}kg`);
+      lines.push(`運費台幣${totalFee}/總重${formatWeightText(groupWeight)} = *${unitPrice.toFixed(2)}*`);
+      lines.push(`${unitPrice.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerFee.toFixed(2)}*`);
+      copyText(lines.join(NL));
+    });
+
+    tools.append("件主", ownerSelect, "件主總重", ownerWeightInput, "總運費", feeInput, copyOwnerBtn, settleCopyBtn);
 
     const ul = document.createElement("ul");
     ul.className = "shipped-group-items";
 
+    let currentOwner = "";
     group.items.forEach((item) => {
+      if (item.ownerName !== currentOwner) {
+        currentOwner = item.ownerName;
+        const ownerLi = document.createElement("li");
+        ownerLi.className = "owner-divider";
+        ownerLi.textContent = `【${currentOwner}】`;
+        ul.appendChild(ownerLi);
+      }
       const li = document.createElement("li");
       li.textContent = `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`;
       ul.appendChild(li);
@@ -1178,9 +1274,10 @@ function renderShippedSummary() {
 
     const footer = document.createElement("div");
     footer.className = "shipped-group-footer";
-    footer.innerHTML = `此單號合計重量: ${groupWeight.toFixed(1)}kg<br>出貨時間: ${group.latestDate}`;
+    footer.innerHTML = `此單號合計重量: ${Number(groupWeight || 0).toFixed(1)}kg<br>出貨時間: ${group.latestDate}`;
 
     detail.appendChild(copyBtn);
+    detail.appendChild(tools);
     detail.appendChild(ul);
     detail.appendChild(footer);
     els.shippedSummaryList.appendChild(detail);
