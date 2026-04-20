@@ -1119,6 +1119,7 @@ function renderShippedSummary() {
       weight: Number(parcel.weight_kg || 0),
       chinaTracking: parcel.tracking_id_china,
       ownerName: friend.name || "-",
+      remark: (parcel.remark || "").trim(),
       ts
     });
   });
@@ -1140,6 +1141,7 @@ function renderShippedSummary() {
   }
 
   const formatWeightText = (value) => Number(value || 0).toFixed(1).replace(/\.0$/, "");
+  const formatItemLine = (item) => `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}${item.remark ? ` ${item.remark}` : ""}`;
   const totalWeight = groups.reduce((sum, group) => {
     return sum + group.items.reduce((sub, item) => sub + item.weight, 0);
   }, 0);
@@ -1168,7 +1170,7 @@ function renderShippedSummary() {
       e.stopPropagation();
       const lines = [
         `台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`,
-        ...group.items.map((item) => `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`)
+        ...group.items.map((item) => formatItemLine(item))
       ];
       lines.push("");
       lines.push(`此單號合計重量: ${Number(groupWeight || 0).toFixed(1)}kg`);
@@ -1222,7 +1224,7 @@ function renderShippedSummary() {
       const owner = ownerSelect.value;
       const ownerItems = group.items.filter((item) => item.ownerName === owner);
       if (!ownerItems.length) return toast("此件主沒有資料");
-      copyText(ownerItems.map((item) => `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`).join(NL));
+      copyText(ownerItems.map((item) => formatItemLine(item)).join(NL));
     });
 
     const settleCopyBtn = document.createElement("button");
@@ -1246,7 +1248,7 @@ function renderShippedSummary() {
 
       const unitPrice = totalFee / groupWeight;
       const ownerFee = unitPrice * ownerWeight;
-      const lines = ownerItems.map((item) => `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`);
+      const lines = ownerItems.map((item) => formatItemLine(item));
       lines.push(`總重${formatWeightText(ownerWeight)}kg`);
       lines.push(`運費台幣${totalFee}/總重${formatWeightText(groupWeight)} = *${unitPrice.toFixed(2)}*`);
       lines.push(`${unitPrice.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerFee.toFixed(2)}*`);
@@ -1268,7 +1270,7 @@ function renderShippedSummary() {
         ul.appendChild(ownerLi);
       }
       const li = document.createElement("li");
-      li.textContent = `${item.weight.toFixed(1)} ${item.chinaTracking} ${item.ownerName}`;
+      li.textContent = formatItemLine(item);
       ul.appendChild(li);
     });
 
