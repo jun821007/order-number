@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-title" content="單號分類工具" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <title>單號分類工具</title>
-  <link rel="stylesheet" href="./styles.css?v=20260326-9" />
+  <link rel="stylesheet" href="./styles.css?v=20260326-10" />
 </head>
 <body>
   <header class="app-header">
@@ -62,7 +62,7 @@
         <section id="inboundCard" class="card collapsible-card">
           <div class="card-click-header"><h3>批量入庫到轉運倉</h3></div>
           <div id="inboundBody" class="hidden">
-            <p class="helper-text">格式：`重量 中國單號`，可貼多行。`合計` 行會自動忽略。</p>
+            <p class="helper-text">格式：`重量 中國單號`，可貼多行。只會更新單號管理裡已存在的單號。</p>
             <textarea id="bulkInboundInput" rows="7" placeholder="0.3 SF1564337616824&#10;0.3 SF1564337616833&#10;0.1 78987614509664&#10;合計7"></textarea>
 
             <label class="field-label" for="bulkInboundPriority">入庫優先級</label>
@@ -71,10 +71,6 @@
               <option value="priority">急</option>
             </select>
 
-            <label class="field-label" for="bulkInboundFriendSelect">件主（找不到既有單號時歸屬到此朋友）</label>
-            <select id="bulkInboundFriendSelect">
-              <option value="">請選擇朋友</option>
-            </select>
 
             <div class="button-row wrap">
               <button id="bulkInboundBtn" class="btn primary">執行批量入庫</button>
@@ -179,7 +175,7 @@
   <div id="sidebarBackdrop" class="sidebar-backdrop hidden"></div>
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./app-config.js?v=20260326-9"></script>
-  <script src="./app.js?v=20260326-9"></script>
+  <script src="./app-config.js?v=20260326-10"></script>
+  <script src="./app.js?v=20260326-10"></script>
 </body>
 </html>

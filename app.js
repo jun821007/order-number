@@ -32,7 +32,6 @@ const els = {
   inboundBody: document.getElementById("inboundBody"),
   bulkInboundInput: document.getElementById("bulkInboundInput"),
   bulkInboundPriority: document.getElementById("bulkInboundPriority"),
-  bulkInboundFriendSelect: document.getElementById("bulkInboundFriendSelect"),
   bulkInboundBtn: document.getElementById("bulkInboundBtn"),
   copyBulkInboundResultBtn: document.getElementById("copyBulkInboundResultBtn"),
   bulkInboundResult: document.getElementById("bulkInboundResult"),
@@ -76,7 +75,6 @@ const state = {
   data: { ...EMPTY_DATA },
   selectedFriendId: null,
   bulkTargetFriendId: "",
-  bulkInboundOwnerFriendId: "",
   selectedParcelIds: new Set(),
   saveQueue: Promise.resolve(),
   shippedCollapsed: true,
@@ -406,7 +404,6 @@ function deleteFriend(friendId) {
   state.selectedParcelIds.clear();
   if (state.selectedFriendId === friendId) state.selectedFriendId = state.data.friends[0]?.id || null;
   if (state.bulkTargetFriendId === friendId) state.bulkTargetFriendId = "";
-  if (state.bulkInboundOwnerFriendId === friendId) state.bulkInboundOwnerFriendId = "";
 
   persistAndRender("已刪除朋友");
 }
@@ -477,7 +474,6 @@ function renderFriendList() {
 
 function renderFriendSelects() {
   const previousBulk = state.bulkTargetFriendId;
-  const previousInbound = state.bulkInboundOwnerFriendId;
   const previousOwnerFilter = state.tableOwnerFilter;
 
   const fill = (selectEl, placeholder) => {
@@ -490,10 +486,9 @@ function renderFriendSelects() {
     });
   };
 
-  fill(els.bulkFriendSelect, "\u8acb\u5148\u9078\u64c7\u670b\u53cb");
-  fill(els.bulkInboundFriendSelect, "\u8acb\u9078\u64c7\u670b\u53cb");
+  fill(els.bulkFriendSelect, "請先選擇朋友");
 
-  els.ownerFilter.innerHTML = '<option value="all">\u5168\u90e8\u4ef6\u4e3b</option>';
+  els.ownerFilter.innerHTML = '<option value="all">全部件主</option>';
   state.data.friends.forEach((friend) => {
     const opt = document.createElement("option");
     opt.value = friend.id;
@@ -506,13 +501,6 @@ function renderFriendSelects() {
     els.bulkFriendSelect.value = previousBulk;
   } else {
     state.bulkTargetFriendId = "";
-  }
-
-  if (state.data.friends.some((f) => f.id === previousInbound)) {
-    state.bulkInboundOwnerFriendId = previousInbound;
-    els.bulkInboundFriendSelect.value = previousInbound;
-  } else {
-    state.bulkInboundOwnerFriendId = "";
   }
 
   if (previousOwnerFilter === "all" || state.data.friends.some((f) => f.id === previousOwnerFilter)) {
@@ -545,12 +533,36 @@ function addBulkParcels() {
   const lines = els.bulkInput.value.split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return toast("請先輸入至少一筆單號");
 
-  const exist = new Set(friend.parcels.map((p) => p.tracking_id_china));
+  const trackingOwnerMap = new Map();
+  state.data.friends.forEach((f) => {
+    f.parcels.forEach((parcel) => {
+      const key = (parcel.tracking_id_china || "").toLowerCase();
+      if (!key || trackingOwnerMap.has(key)) return;
+      trackingOwnerMap.set(key, f.name || "-");
+    });
+  });
+
+  const batchSeen = new Set();
+  const duplicated = [];
   let inserted = 0;
 
   lines.forEach((line) => {
-    const [tracking, ...remarkParts] = line.split(/\s+/);
-    if (!tracking || exist.has(tracking)) return;
+    const [trackingRaw, ...remarkParts] = line.split(/\s+/);
+    const tracking = (trackingRaw || "").trim();
+    const key = tracking.toLowerCase();
+    if (!tracking) return;
+
+    if (batchSeen.has(key)) {
+      duplicated.push(`${tracking}（本次重複）`);
+      return;
+    }
+    batchSeen.add(key);
+
+    if (trackingOwnerMap.has(key)) {
+      duplicated.push(`${tracking}（已存在：${trackingOwnerMap.get(key)}）`);
+      return;
+    }
+
     friend.parcels.push({
       id: uid(),
       tracking_id_china: tracking,
@@ -563,18 +575,24 @@ function addBulkParcels() {
       arrived_at_warehouse_time: null,
       shipped_to_taiwan_time: null
     });
+    trackingOwnerMap.set(key, friend.name || "-");
     inserted += 1;
   });
 
-  if (!inserted) return toast("沒有新增資料（可能都重複）");
+  if (!inserted) {
+    if (duplicated.length) {
+      const preview = duplicated.slice(0, 5).join("、");
+      return toast(`沒有新增，單號重複：${preview}${duplicated.length > 5 ? "..." : ""}`);
+    }
+    return toast("沒有新增資料（可能都重複）");
+  }
+
   state.selectedFriendId = friend.id;
   els.bulkInput.value = "";
-  persistAndRender(`已新增 ${inserted} 筆`);
+  persistAndRender(`已新增 ${inserted} 筆${duplicated.length ? `，略過重複 ${duplicated.length} 筆` : ""}`);
 }
 
 function runBulkInbound() {
-  const ownerFriend = state.data.friends.find((f) => f.id === state.bulkInboundOwnerFriendId);
-
   const lines = els.bulkInboundInput.value.split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return toast("請先輸入批量入庫資料");
 
@@ -584,7 +602,7 @@ function runBulkInbound() {
 
   const processed = [];
   const invalid = [];
-  const skippedNoOwner = [];
+  const missing = [];
 
   lines.forEach((line) => {
     if (/^合計|^合计|^total/i.test(line.replace(/\s+/g, ""))) return;
@@ -595,41 +613,23 @@ function runBulkInbound() {
     const tracking = match[2];
     const entries = trackingIndex.get(tracking.toLowerCase()) || [];
 
-    if (entries.length >= 1) {
-      entries.forEach(({ friend, parcel }) => {
-        parcel.weight_kg = Number.isFinite(weight) ? weight : parcel.weight_kg;
-        parcel.status = "arrived_at_warehouse";
-        parcel.shipping_priority = priority;
-        parcel.arrived_at_warehouse_time = now;
-        parcel.shipped_to_taiwan_time = null;
-        if (parcel.taiwan_parcel_group_id) {
-          linkParcelToTaiwanGroup(parcel.id, "");
-          parcel.taiwan_parcel_group_id = null;
-        }
-        processed.push(`${Number(parcel.weight_kg || 0).toFixed(1)} ${parcel.tracking_id_china} ${ownerCode(friend.name)}`);
-      });
+    if (!entries.length) {
+      missing.push(tracking);
       return;
     }
 
-    if (!ownerFriend) {
-      skippedNoOwner.push(tracking);
-      return;
-    }
-
-    const newParcel = {
-      id: uid(),
-      tracking_id_china: tracking,
-      remark: "",
-      status: "arrived_at_warehouse",
-      shipping_priority: priority,
-      weight_kg: Number.isFinite(weight) ? weight : 0,
-      taiwan_parcel_group_id: null,
-      created_at: now,
-      arrived_at_warehouse_time: now,
-      shipped_to_taiwan_time: null
-    };
-    ownerFriend.parcels.push(newParcel);
-    processed.push(`${Number(newParcel.weight_kg || 0).toFixed(1)} ${newParcel.tracking_id_china} ${ownerCode(ownerFriend.name)}`);
+    entries.forEach(({ friend, parcel }) => {
+      parcel.weight_kg = Number.isFinite(weight) ? weight : parcel.weight_kg;
+      parcel.status = "arrived_at_warehouse";
+      parcel.shipping_priority = priority;
+      parcel.arrived_at_warehouse_time = now;
+      parcel.shipped_to_taiwan_time = null;
+      if (parcel.taiwan_parcel_group_id) {
+        linkParcelToTaiwanGroup(parcel.id, "");
+        parcel.taiwan_parcel_group_id = null;
+      }
+      processed.push(`${Number(parcel.weight_kg || 0).toFixed(1)} ${parcel.tracking_id_china} ${ownerCode(friend.name)}`);
+    });
   });
 
   const output = [];
@@ -637,17 +637,17 @@ function runBulkInbound() {
     output.push(processed.join("\n"));
     output.push(`\n合計 ${processed.length} 件`);
   }
-  if (skippedNoOwner.length) output.push(`\n找不到且未指定件主：${skippedNoOwner.join(", ")}`);
+  if (missing.length) output.push(`\n單號未key，無法帶入：${missing.join(", ")}`);
   if (invalid.length) output.push(`\n格式錯誤：\n${invalid.join("\n")}`);
 
   els.bulkInboundResult.textContent = output.join("\n").trim() || "沒有可處理資料";
   state.bulkInboundCopyText = processed.join("\n");
 
   if (processed.length) {
-    if (ownerFriend) state.selectedFriendId = ownerFriend.id;
-    persistAndRender(`已批量入庫 ${processed.length} 件`);
+    persistAndRender(`已批量入庫 ${processed.length} 件${missing.length ? `，未key ${missing.length} 件` : ""}`);
   } else {
     render();
+    if (missing.length) toast(`有 ${missing.length} 筆單號未key，無法帶入`);
   }
 }
 
@@ -1467,10 +1467,6 @@ async function init() {
   els.bulkFriendSelect.addEventListener("change", (e) => {
     state.bulkTargetFriendId = e.target.value;
     updateBulkAddAvailability();
-  });
-
-  els.bulkInboundFriendSelect.addEventListener("change", (e) => {
-    state.bulkInboundOwnerFriendId = e.target.value;
   });
 
   els.ownerFilter.addEventListener("change", (e) => {
