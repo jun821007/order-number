@@ -1216,12 +1216,6 @@ function renderShippedSummary() {
     ownerWeightInput.min = "0";
     ownerWeightInput.step = "0.1";
 
-    const feeInput = document.createElement("input");
-    feeInput.type = "number";
-    feeInput.min = "0";
-    feeInput.step = "1";
-    feeInput.placeholder = "輸入總運費";
-
     const syncOwnerWeight = () => {
       const selectedOwner = ownerSelect.value;
       const ownerWeight = ownerWeightMap.get(selectedOwner) || 0;
@@ -1254,9 +1248,6 @@ function renderShippedSummary() {
       const ownerItems = group.items.filter((item) => item.ownerName === owner);
       if (!ownerItems.length) return toast("此件主沒有資料");
 
-      const totalFee = Number.parseFloat((feeInput.value || "").trim());
-      if (!Number.isFinite(totalFee) || totalFee < 0) return toast("請先輸入總運費");
-
       const ownerWeight = Number.parseFloat((ownerWeightInput.value || "").trim());
       if (!Number.isFinite(ownerWeight) || ownerWeight < 0) return toast("件主總重格式錯誤");
 
@@ -1266,18 +1257,21 @@ function renderShippedSummary() {
         return toast("此筆未填結帳人民幣/台幣總金額");
       }
 
-      const unitPrice = totalFee / groupWeight;
-      const ownerFee = unitPrice * ownerWeight;
+      const cnyUnit = group.settlementCny / groupWeight;
+      const twdUnit = group.settlementTwd / groupWeight;
+      const ownerCny = cnyUnit * ownerWeight;
+      const ownerTwd = twdUnit * ownerWeight;
+
       const lines = ownerItems.map((item) => formatItemLine(item));
       lines.push(`總重${formatWeightText(ownerWeight)}kg`);
-      lines.push(`總金額人民幣：${group.settlementCny}`);
-      lines.push(`總金額台幣：${group.settlementTwd}`);
-      lines.push(`運費台幣${totalFee}/總重${formatWeightText(groupWeight)} = *${unitPrice.toFixed(2)}*`);
-      lines.push(`${unitPrice.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerFee.toFixed(2)}*`);
+      lines.push(`人民幣${group.settlementCny}/總重${formatWeightText(groupWeight)} = *${cnyUnit.toFixed(2)}*`);
+      lines.push(`${cnyUnit.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerCny.toFixed(2)}*`);
+      lines.push(`台幣${group.settlementTwd}/總重${formatWeightText(groupWeight)} = *${twdUnit.toFixed(2)}*`);
+      lines.push(`${twdUnit.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerTwd.toFixed(2)}*`);
       copyText(lines.join(NL));
     });
 
-    tools.append("件主", ownerSelect, "件主總重", ownerWeightInput, "總運費", feeInput, copyOwnerBtn, settleCopyBtn);
+    tools.append("件主", ownerSelect, "件主總重", ownerWeightInput, copyOwnerBtn, settleCopyBtn);
 
     const ul = document.createElement("ul");
     ul.className = "shipped-group-items";
