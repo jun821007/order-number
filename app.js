@@ -324,6 +324,8 @@ function upsertTaiwanGroupByTracking(trackingId) {
       tracking_id_taiwan: trackingId,
       china_tracking_ids: [],
       total_weight_kg: 0,
+      settlement_total_cny: null,
+      settlement_total_twd: null,
       created_at: nowIso()
     };
     state.data.taiwan_parcel_groups.push(group);
@@ -1090,6 +1092,13 @@ function renderShippedSummary() {
   if (!els.shippedSummaryList) return;
 
   const keyword = (els.shippedTaiwanSearch?.value || "").trim().toLowerCase();
+  const groupMetaMap = new Map();
+  state.data.taiwan_parcel_groups.forEach((g) => {
+    groupMetaMap.set((g.tracking_id_taiwan || "").trim(), {
+      settlementCny: Number.isFinite(Number(g.settlement_total_cny)) ? Number(g.settlement_total_cny) : null,
+      settlementTwd: Number.isFinite(Number(g.settlement_total_twd)) ? Number(g.settlement_total_twd) : null
+    });
+  });
   const groupMap = new Map();
 
   shippedRows.forEach(({ friend, parcel }) => {
@@ -1101,10 +1110,13 @@ function renderShippedSummary() {
     const ts = Number.isFinite(new Date(shippedAt).getTime()) ? new Date(shippedAt).getTime() : 0;
 
     if (!groupMap.has(taiwanId)) {
+      const meta = groupMetaMap.get(taiwanId) || { settlementCny: null, settlementTwd: null };
       groupMap.set(taiwanId, {
         taiwanId,
         latestTs: ts,
         latestDate: formatDateOnly(shippedAt),
+        settlementCny: meta.settlementCny,
+        settlementTwd: meta.settlementTwd,
         items: []
       });
     }
@@ -1187,6 +1199,10 @@ function renderShippedSummary() {
     const tools = document.createElement("div");
     tools.className = "shipped-owner-tools";
 
+    const amountInfo = document.createElement("div");
+    amountInfo.className = "shipped-amount-info";
+    amountInfo.textContent = `總金額人民幣：${group.settlementCny ?? "-"} | 總金額台幣：${group.settlementTwd ?? "-"}`;
+
     const ownerSelect = document.createElement("select");
     ownerNames.forEach((name) => {
       const opt = document.createElement("option");
@@ -1246,10 +1262,16 @@ function renderShippedSummary() {
 
       if (groupWeight <= 0) return toast("此包裹總重為 0，無法結算");
 
+      if (!Number.isFinite(group.settlementCny) || !Number.isFinite(group.settlementTwd)) {
+        return toast("此筆未填結帳人民幣/台幣總金額");
+      }
+
       const unitPrice = totalFee / groupWeight;
       const ownerFee = unitPrice * ownerWeight;
       const lines = ownerItems.map((item) => formatItemLine(item));
       lines.push(`總重${formatWeightText(ownerWeight)}kg`);
+      lines.push(`總金額人民幣：${group.settlementCny}`);
+      lines.push(`總金額台幣：${group.settlementTwd}`);
       lines.push(`運費台幣${totalFee}/總重${formatWeightText(groupWeight)} = *${unitPrice.toFixed(2)}*`);
       lines.push(`${unitPrice.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerFee.toFixed(2)}*`);
       copyText(lines.join(NL));
@@ -1279,6 +1301,7 @@ function renderShippedSummary() {
     footer.innerHTML = `此單號合計重量: ${Number(groupWeight || 0).toFixed(1)}kg<br>出貨時間: ${group.latestDate}`;
 
     detail.appendChild(copyBtn);
+    detail.appendChild(amountInfo);
     detail.appendChild(tools);
     detail.appendChild(ul);
     detail.appendChild(footer);
@@ -1346,7 +1369,19 @@ function markSelectedShipped() {
   const taiwanList = parseTaiwanTrackingIds(trackingTaiwanRaw);
   if (!taiwanList.length) return toast("已略過操作");
 
+  const cnyRaw = prompt("輸入人民幣總金額（必填）：", "");
+  if (cnyRaw === null) return toast("已略過操作");
+  const cny = Number.parseFloat((cnyRaw || "").trim());
+  if (!Number.isFinite(cny) || cny < 0) return toast("人民幣金額格式錯誤");
+
+  const twdRaw = prompt("輸入台幣總金額（必填）：", "");
+  if (twdRaw === null) return toast("已略過操作");
+  const twd = Number.parseFloat((twdRaw || "").trim());
+  if (!Number.isFinite(twd) || twd < 0) return toast("台幣金額格式錯誤");
+
   const group = upsertTaiwanGroupByTracking(taiwanList.join(String.fromCharCode(10)));
+  group.settlement_total_cny = Number(cny.toFixed(2));
+  group.settlement_total_twd = Number(twd.toFixed(2));
   selected.forEach((parcel) => {
     parcel.status = "shipped_to_taiwan";
     parcel.taiwan_parcel_group_id = group.id;
