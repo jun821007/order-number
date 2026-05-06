@@ -211,25 +211,42 @@ function buildRequestBody(data, fieldName) {
   return { [fieldName]: data };
 }
 
+function normalizeShippingEntry(entry) {
+  return {
+    id: entry?.id || uid(),
+    name: (entry?.name || "").trim(),
+    phone: (entry?.phone || "").trim(),
+    address: (entry?.address || "").trim()
+  };
+}
+
+function normalizeShippingList(rawList, fallbackSingle) {
+  if (Array.isArray(rawList)) {
+    return rawList.map((entry) => normalizeShippingEntry(entry));
+  }
+  if (fallbackSingle && typeof fallbackSingle === "object") {
+    const normalized = normalizeShippingEntry(fallbackSingle);
+    if (normalized.name || normalized.phone || normalized.address) return [normalized];
+  }
+  return [];
+}
+
+function normalizeShippingProfiles(rawProfiles) {
+  const p = rawProfiles || {};
+  return {
+    convenience_list: normalizeShippingList(p.convenience_list, p.convenience),
+    address_list: normalizeShippingList(p.address_list, p.address)
+  };
+}
+
 function normalizeDataShape(raw) {
   const friendsRaw = Array.isArray(raw?.friends) ? raw.friends : [];
   const friends = friendsRaw.map((friend) => {
-    const shippingProfiles = friend?.shipping_profiles || {};
+    const shippingProfiles = normalizeShippingProfiles(friend?.shipping_profiles);
     return {
       ...friend,
       parcels: Array.isArray(friend?.parcels) ? friend.parcels : [],
-      shipping_profiles: {
-        convenience: {
-          name: shippingProfiles?.convenience?.name || "",
-          phone: shippingProfiles?.convenience?.phone || "",
-          address: shippingProfiles?.convenience?.address || ""
-        },
-        address: {
-          name: shippingProfiles?.address?.name || "",
-          phone: shippingProfiles?.address?.phone || "",
-          address: shippingProfiles?.address?.address || ""
-        }
-      }
+      shipping_profiles: shippingProfiles
     };
   });
 
@@ -392,7 +409,12 @@ function getFilteredFriends() {
   return state.data.friends.filter((friend) => {
     const friendName = (friend.name || "").toLowerCase();
     const receiptName = (friend.receipt_info?.name || "").toLowerCase();
-    if (friendName.includes(keyword) || receiptName.includes(keyword)) return true;
+    const shippingText = [
+      ...(friend.shipping_profiles?.address_list || []).flatMap((item) => [item.name, item.phone, item.address]),
+      ...(friend.shipping_profiles?.convenience_list || []).flatMap((item) => [item.name, item.phone, item.address])
+    ].join(" ").toLowerCase();
+
+    if (friendName.includes(keyword) || receiptName.includes(keyword) || shippingText.includes(keyword)) return true;
     return friend.parcels.some((parcel) => {
       const china = (parcel.tracking_id_china || "").toLowerCase();
       const tw = getTaiwanIdForParcel(parcel).toLowerCase();
@@ -401,42 +423,111 @@ function getFilteredFriends() {
   });
 }
 
-function editFriendShippingProfiles(friendId) {
-  const friend = state.data.friends.find((f) => f.id === friendId);
-  if (!friend) return;
-  friend.shipping_profiles = friend.shipping_profiles || { convenience: {}, address: {} };
-
-  const c = friend.shipping_profiles.convenience || { name: "", phone: "", address: "" };
-  const cName = prompt("超商收件姓名：", c.name || "");
-  if (cName === null) return;
-  const cPhone = prompt("超商收件電話：", c.phone || "");
-  if (cPhone === null) return;
-  const cAddress = prompt("超商門市/地址：", c.address || "");
-  if (cAddress === null) return;
-
-  const a = friend.shipping_profiles.address || { name: "", phone: "", address: "" };
-  const aName = prompt("地址收件姓名：", a.name || "");
-  if (aName === null) return;
-  const aPhone = prompt("地址收件電話：", a.phone || "");
-  if (aPhone === null) return;
-  const aAddress = prompt("地址收件地址：", a.address || "");
-  if (aAddress === null) return;
-
-  friend.shipping_profiles = {
-    convenience: { name: cName.trim(), phone: cPhone.trim(), address: cAddress.trim() },
-    address: { name: aName.trim(), phone: aPhone.trim(), address: aAddress.trim() }
-  };
-  persistAndRender("已更新寄件資訊");
+function getShippingListKey(type) {
+  return type === "convenience" ? "convenience_list" : "address_list";
 }
 
-function copyFriendShippingInfo(friendId, type) {
+function getShippingTypeLabel(type) {
+  return type === "convenience" ? "超商" : "地址";
+}
+
+function ensureFriendShippingProfiles(friend) {
+  if (!friend.shipping_profiles || typeof friend.shipping_profiles !== "object") {
+    friend.shipping_profiles = normalizeShippingProfiles(null);
+    return;
+  }
+  friend.shipping_profiles = normalizeShippingProfiles(friend.shipping_profiles);
+}
+
+function getFriendShippingList(friend, type) {
+  ensureFriendShippingProfiles(friend);
+  return friend.shipping_profiles[getShippingListKey(type)] || [];
+}
+
+function escapeAttr(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function copyShippingEntry(friendId, type, entryId) {
   const friend = state.data.friends.find((f) => f.id === friendId);
   if (!friend) return;
-  const profile = friend.shipping_profiles?.[type] || { name: "", phone: "", address: "" };
-  const title = type === "convenience" ? "超商" : "地址";
-  copyText(`${title}收件姓名: ${profile.name || "-"}
-${title}收件電話: ${profile.phone || "-"}
-${title}收件地址: ${profile.address || "-"}`);
+  const entry = getFriendShippingList(friend, type).find((item) => item.id === entryId);
+  if (!entry) return;
+  copyText(`${entry.name || "-"}
+${entry.phone || "-"}
+${entry.address || "-"}`);
+}
+
+function addShippingEntry(friendId, type, payload) {
+  const friend = state.data.friends.find((f) => f.id === friendId);
+  if (!friend) return;
+
+  const name = (payload?.name || "").trim();
+  const phone = (payload?.phone || "").trim();
+  const address = (payload?.address || "").trim();
+  if (!name && !phone && !address) return toast("請至少輸入一個欄位");
+
+  const list = getFriendShippingList(friend, type);
+  list.push({ id: uid(), name, phone, address });
+  persistAndRender(`已新增${getShippingTypeLabel(type)}資訊`);
+}
+
+function saveShippingEntry(friendId, type, entryId, payload) {
+  const friend = state.data.friends.find((f) => f.id === friendId);
+  if (!friend) return;
+  const list = getFriendShippingList(friend, type);
+  const entry = list.find((item) => item.id === entryId);
+  if (!entry) return;
+
+  entry.name = (payload?.name || "").trim();
+  entry.phone = (payload?.phone || "").trim();
+  entry.address = (payload?.address || "").trim();
+  persistAndRender(`已更新${getShippingTypeLabel(type)}資訊`);
+}
+
+function deleteShippingEntry(friendId, type, entryId) {
+  const friend = state.data.friends.find((f) => f.id === friendId);
+  if (!friend) return;
+  const list = getFriendShippingList(friend, type);
+  const label = getShippingTypeLabel(type);
+  if (!confirm(`確定刪除此筆${label}資訊？`)) return;
+  friend.shipping_profiles[getShippingListKey(type)] = list.filter((item) => item.id !== entryId);
+  persistAndRender(`已刪除${label}資訊`);
+}
+
+function renderShippingSection(friend, type, title) {
+  const list = getFriendShippingList(friend, type);
+  const rows = list.map((item) => {
+    return `
+      <div class="shipping-entry" data-shipping-entry-id="${item.id}" data-shipping-type="${type}">
+        <input type="text" data-shipping-field="name" placeholder="姓名" value="${escapeAttr(item.name)}" />
+        <input type="text" data-shipping-field="phone" placeholder="電話" value="${escapeAttr(item.phone)}" />
+        <input type="text" data-shipping-field="address" placeholder="${title === "超商" ? "門市/地址" : "地址"}" value="${escapeAttr(item.address)}" />
+        <div class="button-row tight wrap">
+          <button class="btn small" data-friend-save-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">儲存</button>
+          <button class="btn small" data-friend-copy-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">複製資訊</button>
+          <button class="btn danger small" data-friend-delete-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">刪除</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  return `
+    <div class="shipping-section">
+      <div class="shipping-section-title">${title}</div>
+      ${rows || '<div class="shipping-empty">尚無資料</div>'}
+      <div class="shipping-entry shipping-entry-new" data-shipping-type="${type}">
+        <input type="text" data-shipping-new-field="name" placeholder="姓名" />
+        <input type="text" data-shipping-new-field="phone" placeholder="電話" />
+        <input type="text" data-shipping-new-field="address" placeholder="${title === "超商" ? "門市/地址" : "地址"}" />
+        <div class="button-row tight">
+          <button class="btn small primary" data-friend-add-shipping="${friend.id}" data-shipping-type="${type}">新增${title}資訊</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 function deleteFriend(friendId) {
@@ -473,13 +564,10 @@ function renderFriendList() {
       <div class="friend-item-header">
         <div class="friend-item-name" data-friend-select="${friend.id}">${friend.name}</div>
         <div class="button-row tight wrap">
-          <button class="btn small" data-friend-edit-shipping="${friend.id}">寄件資訊</button>
-          <button class="btn small" data-friend-copy-convenience="${friend.id}">複製超商資訊</button>
-          <button class="btn small" data-friend-copy-address="${friend.id}">複製地址資訊</button>
           <button class="btn danger small" data-friend-delete="${friend.id}">刪除</button>
         </div>
       </div>
-      ${selected ? `<div class="friend-inline-info"><div>超商：${friend.shipping_profiles?.convenience?.name || "-"} / ${friend.shipping_profiles?.convenience?.phone || "-"} / ${friend.shipping_profiles?.convenience?.address || "-"}</div><div>地址：${friend.shipping_profiles?.address?.name || "-"} / ${friend.shipping_profiles?.address?.phone || "-"} / ${friend.shipping_profiles?.address?.address || "-"}</div></div>` : ""}
+      ${selected ? `<div class="friend-inline-info">${renderShippingSection(friend, "address", "地址")}${renderShippingSection(friend, "convenience", "超商")}</div>` : ""}
     `;
     els.friendList.appendChild(li);
   });
@@ -493,24 +581,62 @@ function renderFriendList() {
     });
   });
 
-  els.friendList.querySelectorAll("[data-friend-edit-shipping]").forEach((btn) => {
+  els.friendList.querySelectorAll("[data-friend-add-shipping]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      editFriendShippingProfiles(btn.getAttribute("data-friend-edit-shipping"));
+      const wrapper = btn.closest(".shipping-entry-new");
+      if (!wrapper) return;
+      const payload = {
+        name: wrapper.querySelector('[data-shipping-new-field="name"]')?.value || "",
+        phone: wrapper.querySelector('[data-shipping-new-field="phone"]')?.value || "",
+        address: wrapper.querySelector('[data-shipping-new-field="address"]')?.value || ""
+      };
+      addShippingEntry(
+        btn.getAttribute("data-friend-add-shipping"),
+        btn.getAttribute("data-shipping-type") || "address",
+        payload
+      );
     });
   });
 
-  els.friendList.querySelectorAll("[data-friend-copy-convenience]").forEach((btn) => {
+  els.friendList.querySelectorAll("[data-friend-save-shipping]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      copyFriendShippingInfo(btn.getAttribute("data-friend-copy-convenience"), "convenience");
+      const wrapper = btn.closest(".shipping-entry");
+      if (!wrapper) return;
+      const payload = {
+        name: wrapper.querySelector('[data-shipping-field="name"]')?.value || "",
+        phone: wrapper.querySelector('[data-shipping-field="phone"]')?.value || "",
+        address: wrapper.querySelector('[data-shipping-field="address"]')?.value || ""
+      };
+      saveShippingEntry(
+        btn.getAttribute("data-friend-save-shipping"),
+        btn.getAttribute("data-shipping-type") || "address",
+        btn.getAttribute("data-shipping-entry-id"),
+        payload
+      );
     });
   });
 
-  els.friendList.querySelectorAll("[data-friend-copy-address]").forEach((btn) => {
+  els.friendList.querySelectorAll("[data-friend-copy-shipping]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      copyFriendShippingInfo(btn.getAttribute("data-friend-copy-address"), "address");
+      copyShippingEntry(
+        btn.getAttribute("data-friend-copy-shipping"),
+        btn.getAttribute("data-shipping-type") || "address",
+        btn.getAttribute("data-shipping-entry-id")
+      );
+    });
+  });
+
+  els.friendList.querySelectorAll("[data-friend-delete-shipping]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteShippingEntry(
+        btn.getAttribute("data-friend-delete-shipping"),
+        btn.getAttribute("data-shipping-type") || "address",
+        btn.getAttribute("data-shipping-entry-id")
+      );
     });
   });
 
@@ -571,8 +697,8 @@ function addFriend() {
     name: name.trim(),
     receipt_info: { name: "", phone: "", address: "", id_number: "" },
     shipping_profiles: {
-      convenience: { name: "", phone: "", address: "" },
-      address: { name: "", phone: "", address: "" }
+      convenience_list: [],
+      address_list: []
     },
     parcels: []
   });

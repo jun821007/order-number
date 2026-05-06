@@ -17,25 +17,41 @@ const emptyData = { friends: [], taiwan_parcel_groups: [] };
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: "1mb" }));
 
+function normalizeShippingEntry(entry) {
+  return {
+    id: entry?.id || `sp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name: (entry?.name || "").trim(),
+    phone: (entry?.phone || "").trim(),
+    address: (entry?.address || "").trim()
+  };
+}
+
+function normalizeShippingList(rawList, fallbackSingle) {
+  if (Array.isArray(rawList)) {
+    return rawList.map((entry) => normalizeShippingEntry(entry));
+  }
+  if (fallbackSingle && typeof fallbackSingle === "object") {
+    const normalized = normalizeShippingEntry(fallbackSingle);
+    if (normalized.name || normalized.phone || normalized.address) return [normalized];
+  }
+  return [];
+}
+
+function normalizeShippingProfiles(rawProfiles) {
+  const p = rawProfiles || {};
+  return {
+    convenience_list: normalizeShippingList(p.convenience_list, p.convenience),
+    address_list: normalizeShippingList(p.address_list, p.address)
+  };
+}
+
 function normalizeDataShape(raw) {
   const friendsRaw = Array.isArray(raw?.friends) ? raw.friends : [];
   const friends = friendsRaw.map((friend) => {
-    const shippingProfiles = friend?.shipping_profiles || {};
     return {
       ...friend,
       parcels: Array.isArray(friend?.parcels) ? friend.parcels : [],
-      shipping_profiles: {
-        convenience: {
-          name: shippingProfiles?.convenience?.name || "",
-          phone: shippingProfiles?.convenience?.phone || "",
-          address: shippingProfiles?.convenience?.address || ""
-        },
-        address: {
-          name: shippingProfiles?.address?.name || "",
-          phone: shippingProfiles?.address?.phone || "",
-          address: shippingProfiles?.address?.address || ""
-        }
-      }
+      shipping_profiles: normalizeShippingProfiles(friend?.shipping_profiles)
     };
   });
 
