@@ -516,8 +516,8 @@ function renderShippingSection(friend, type, title) {
         <input type="text" data-shipping-field="address" placeholder="${title === "超商" ? "門市/地址" : "地址"}" value="${escapeAttr(item.address)}" ${readonlyAttr} />
         <div class="button-row tight wrap">
           <button class="btn small" data-friend-save-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">${isEditing ? "儲存" : "修改"}</button>
-          <button class="btn small" data-friend-copy-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">複製資訊</button>
           <button class="btn danger small" data-friend-delete-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">刪除</button>
+          <button class="btn small" data-friend-copy-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">複製資訊</button>
         </div>
       </div>`;
   }).join("");
