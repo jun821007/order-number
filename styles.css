@@ -182,6 +182,8 @@ th, td {
 .btn:hover { background: #f3f4f6; }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .btn.primary:hover { background: var(--primary-hover); }
+.btn.success { background: #059669; border-color: #059669; color: #fff; }
+.btn.success:hover { background: #047857; }
 .btn.danger { border-color: #fecaca; color: var(--danger); background: #fff5f5; }
 .btn.danger:hover { background: #fee2e2; }
 .btn:disabled {

@@ -18,8 +18,34 @@ app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: "1mb" }));
 
 function normalizeDataShape(raw) {
-  const friends = Array.isArray(raw?.friends) ? raw.friends : [];
-  const groups = Array.isArray(raw?.taiwan_parcel_groups) ? raw.taiwan_parcel_groups : [];
+  const friendsRaw = Array.isArray(raw?.friends) ? raw.friends : [];
+  const friends = friendsRaw.map((friend) => {
+    const shippingProfiles = friend?.shipping_profiles || {};
+    return {
+      ...friend,
+      parcels: Array.isArray(friend?.parcels) ? friend.parcels : [],
+      shipping_profiles: {
+        convenience: {
+          name: shippingProfiles?.convenience?.name || "",
+          phone: shippingProfiles?.convenience?.phone || "",
+          address: shippingProfiles?.convenience?.address || ""
+        },
+        address: {
+          name: shippingProfiles?.address?.name || "",
+          phone: shippingProfiles?.address?.phone || "",
+          address: shippingProfiles?.address?.address || ""
+        }
+      }
+    };
+  });
+
+  const groupsRaw = Array.isArray(raw?.taiwan_parcel_groups) ? raw.taiwan_parcel_groups : [];
+  const groups = groupsRaw.map((group) => ({
+    ...group,
+    settlement_total_cny: Number.isFinite(Number(group?.settlement_total_cny)) ? Number(group.settlement_total_cny) : null,
+    settlement_total_twd: Number.isFinite(Number(group?.settlement_total_twd)) ? Number(group.settlement_total_twd) : null,
+    shipping_method: (group?.shipping_method || "").trim()
+  }));
   return { friends, taiwan_parcel_groups: groups };
 }
 

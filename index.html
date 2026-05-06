@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-title" content="單號分類工具" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <title>單號分類工具</title>
-  <link rel="stylesheet" href="./styles.css?v=20260326-13" />
+  <link rel="stylesheet" href="./styles.css?v=20260326-14" />
 </head>
 <body>
   <header class="app-header">
@@ -80,23 +80,6 @@
           </div>
         </section>
 
-        <section id="shipCard" class="card collapsible-card">
-          <div class="card-click-header"><h3>批量出轉運倉</h3></div>
-          <div id="shipBody" class="hidden">
-            <p class="helper-text">格式：`重量 中國單號`，可貼多行。`合計` 行會自動忽略。</p>
-            <textarea id="bulkShipInput" rows="7" placeholder="0.3 SF1564337616824&#10;0.3 SF1564337616833&#10;0.1 78987614509664&#10;合計7"></textarea>
-
-            <label class="field-label" for="bulkShipTaiwanInput">台灣單號（可多行，空白自動產生批次代碼）</label>
-            <textarea id="bulkShipTaiwanInput" rows="3" placeholder="例如：\nTW1234567890\nTW1234567891"></textarea>
-
-            <div class="button-row wrap">
-              <button id="bulkShipBtn" class="btn primary">執行批量出轉運</button>
-              <button id="copyBulkShipResultBtn" class="btn">複製結果</button>
-            </div>
-            <pre id="bulkShipResult" class="summary-box"></pre>
-          </div>
-        </section>
-
         <section class="card">
           <label class="field-label" for="globalTrackingSearch">搜尋單號（可打尾碼，手機建議用這裡）</label>
           <input id="globalTrackingSearch" type="text" placeholder="例如：只打 824 也可找出含此尾碼的朋友與單號" />
@@ -152,10 +135,9 @@
 
           <div class="button-row wrap">
             <button id="markArrivedBtn" class="btn">&#27161;&#35352;&#36984;&#20013;&#28858;&#24050;&#21040;&#38598;&#36939;&#20489;</button>
-            <button id="markShippedBtn" class="btn">&#27161;&#35352;&#36984;&#20013;&#28858;&#24050;&#20986;&#36681;&#36939;</button>
+            <button id="markShippedBtn" class="btn success">&#27161;&#35352;&#36984;&#20013;&#28858;&#24050;&#20986;&#36681;&#36939;</button>
             <button id="copyChinaBtn" class="btn">&#35079;&#35069;&#36984;&#20013;&#30340;&#20013;&#22283;&#21934;&#34399;</button>
             <button id="copyChinaRemarkBtn" class="btn">&#35079;&#35069;&#36984;&#20013;&#30340;&#20013;&#22283;&#21934;&#34399;&#65291;&#20633;&#35387;</button>
-            <button id="copyTaiwanBtn" class="btn">&#35079;&#35069;&#36984;&#20013;&#30340;&#21488;&#28771;&#21934;&#34399;</button>
           </div>
           <div id="parcelCountText" class="parcel-count">&#30446;&#21069;&#20849; 0 &#31558;&#21934;&#34399;</div>
         </section>
@@ -175,7 +157,7 @@
   <div id="sidebarBackdrop" class="sidebar-backdrop hidden"></div>
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./app-config.js?v=20260326-13"></script>
-  <script src="./app.js?v=20260326-13"></script>
+  <script src="./app-config.js?v=20260326-14"></script>
+  <script src="./app.js?v=20260326-14"></script>
 </body>
 </html>

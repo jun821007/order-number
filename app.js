@@ -164,9 +164,9 @@ function updateFriendListCollapseUI() {
 }
 
 function updateSectionCollapseUI() {
-  els.addParcelBody.classList.toggle("hidden", state.addParcelCollapsed);
-  els.inboundBody.classList.toggle("hidden", state.inboundCollapsed);
-  els.shipBody.classList.toggle("hidden", state.shipCollapsed);
+  if (els.addParcelBody) els.addParcelBody.classList.toggle("hidden", state.addParcelCollapsed);
+  if (els.inboundBody) els.inboundBody.classList.toggle("hidden", state.inboundCollapsed);
+  if (els.shipBody) els.shipBody.classList.toggle("hidden", state.shipCollapsed);
 }
 
 function updateBulkAddAvailability() {
@@ -212,8 +212,35 @@ function buildRequestBody(data, fieldName) {
 }
 
 function normalizeDataShape(raw) {
-  const friends = Array.isArray(raw?.friends) ? raw.friends : [];
-  const groups = Array.isArray(raw?.taiwan_parcel_groups) ? raw.taiwan_parcel_groups : [];
+  const friendsRaw = Array.isArray(raw?.friends) ? raw.friends : [];
+  const friends = friendsRaw.map((friend) => {
+    const shippingProfiles = friend?.shipping_profiles || {};
+    return {
+      ...friend,
+      parcels: Array.isArray(friend?.parcels) ? friend.parcels : [],
+      shipping_profiles: {
+        convenience: {
+          name: shippingProfiles?.convenience?.name || "",
+          phone: shippingProfiles?.convenience?.phone || "",
+          address: shippingProfiles?.convenience?.address || ""
+        },
+        address: {
+          name: shippingProfiles?.address?.name || "",
+          phone: shippingProfiles?.address?.phone || "",
+          address: shippingProfiles?.address?.address || ""
+        }
+      }
+    };
+  });
+
+  const groupsRaw = Array.isArray(raw?.taiwan_parcel_groups) ? raw.taiwan_parcel_groups : [];
+  const groups = groupsRaw.map((group) => ({
+    ...group,
+    settlement_total_cny: Number.isFinite(Number(group?.settlement_total_cny)) ? Number(group.settlement_total_cny) : null,
+    settlement_total_twd: Number.isFinite(Number(group?.settlement_total_twd)) ? Number(group.settlement_total_twd) : null,
+    shipping_method: (group?.shipping_method || "").trim()
+  }));
+
   return { friends, taiwan_parcel_groups: groups };
 }
 
@@ -326,6 +353,7 @@ function upsertTaiwanGroupByTracking(trackingId) {
       total_weight_kg: 0,
       settlement_total_cny: null,
       settlement_total_twd: null,
+      shipping_method: "",
       created_at: nowIso()
     };
     state.data.taiwan_parcel_groups.push(group);
@@ -373,28 +401,42 @@ function getFilteredFriends() {
   });
 }
 
-function editFriendInfo(friendId) {
+function editFriendShippingProfiles(friendId) {
   const friend = state.data.friends.find((f) => f.id === friendId);
   if (!friend) return;
-  const old = friend.receipt_info || { name: "", phone: "", address: "", id_number: "" };
-  const name = prompt("收件姓名：", old.name || "");
-  if (name === null) return;
-  const phone = prompt("收件電話：", old.phone || "");
-  if (phone === null) return;
-  const address = prompt("收件地址：", old.address || "");
-  if (address === null) return;
-  const idNumber = prompt("身分證字號：", old.id_number || "");
-  if (idNumber === null) return;
+  friend.shipping_profiles = friend.shipping_profiles || { convenience: {}, address: {} };
 
-  friend.receipt_info = { name: name.trim(), phone: phone.trim(), address: address.trim(), id_number: idNumber.trim() };
-  persistAndRender("已更新朋友資訊");
+  const c = friend.shipping_profiles.convenience || { name: "", phone: "", address: "" };
+  const cName = prompt("超商收件姓名：", c.name || "");
+  if (cName === null) return;
+  const cPhone = prompt("超商收件電話：", c.phone || "");
+  if (cPhone === null) return;
+  const cAddress = prompt("超商門市/地址：", c.address || "");
+  if (cAddress === null) return;
+
+  const a = friend.shipping_profiles.address || { name: "", phone: "", address: "" };
+  const aName = prompt("地址收件姓名：", a.name || "");
+  if (aName === null) return;
+  const aPhone = prompt("地址收件電話：", a.phone || "");
+  if (aPhone === null) return;
+  const aAddress = prompt("地址收件地址：", a.address || "");
+  if (aAddress === null) return;
+
+  friend.shipping_profiles = {
+    convenience: { name: cName.trim(), phone: cPhone.trim(), address: cAddress.trim() },
+    address: { name: aName.trim(), phone: aPhone.trim(), address: aAddress.trim() }
+  };
+  persistAndRender("已更新寄件資訊");
 }
 
-function copyFriendInfo(friendId) {
+function copyFriendShippingInfo(friendId, type) {
   const friend = state.data.friends.find((f) => f.id === friendId);
   if (!friend) return;
-  const r = friend.receipt_info || { name: "", phone: "", address: "" };
-  copyText(`姓名: ${r.name || "-"}\n電話: ${r.phone || "-"}\n地址: ${r.address || "-"}`);
+  const profile = friend.shipping_profiles?.[type] || { name: "", phone: "", address: "" };
+  const title = type === "convenience" ? "超商" : "地址";
+  copyText(`${title}收件姓名: ${profile.name || "-"}
+${title}收件電話: ${profile.phone || "-"}
+${title}收件地址: ${profile.address || "-"}`);
 }
 
 function deleteFriend(friendId) {
@@ -424,21 +466,20 @@ function renderFriendList() {
 
   friends.forEach((friend) => {
     const selected = friend.id === state.selectedFriendId;
-    const r = friend.receipt_info || { name: "", phone: "", address: "", id_number: "" };
-    const hasInfo = Boolean((r.name || r.phone || r.address || r.id_number || "").trim());
 
     const li = document.createElement("li");
     li.className = `friend-item ${selected ? "active" : ""}`;
     li.innerHTML = `
       <div class="friend-item-header">
         <div class="friend-item-name" data-friend-select="${friend.id}">${friend.name}</div>
-        <div class="button-row tight">
-          <button class="btn small" data-friend-edit="${friend.id}">${hasInfo ? "修改資訊" : "新增資訊"}</button>
-          <button class="btn small" data-friend-copy="${friend.id}">複製資訊</button>
+        <div class="button-row tight wrap">
+          <button class="btn small" data-friend-edit-shipping="${friend.id}">寄件資訊</button>
+          <button class="btn small" data-friend-copy-convenience="${friend.id}">複製超商資訊</button>
+          <button class="btn small" data-friend-copy-address="${friend.id}">複製地址資訊</button>
           <button class="btn danger small" data-friend-delete="${friend.id}">刪除</button>
         </div>
       </div>
-      ${selected ? `<div class="friend-inline-info"><div>姓名：${r.name || "-"}</div><div>電話：${r.phone || "-"}</div><div>地址：${r.address || "-"}</div><div>身分證字號：${r.id_number || "-"}</div></div>` : ""}
+      ${selected ? `<div class="friend-inline-info"><div>超商：${friend.shipping_profiles?.convenience?.name || "-"} / ${friend.shipping_profiles?.convenience?.phone || "-"} / ${friend.shipping_profiles?.convenience?.address || "-"}</div><div>地址：${friend.shipping_profiles?.address?.name || "-"} / ${friend.shipping_profiles?.address?.phone || "-"} / ${friend.shipping_profiles?.address?.address || "-"}</div></div>` : ""}
     `;
     els.friendList.appendChild(li);
   });
@@ -452,17 +493,24 @@ function renderFriendList() {
     });
   });
 
-  els.friendList.querySelectorAll("[data-friend-edit]").forEach((btn) => {
+  els.friendList.querySelectorAll("[data-friend-edit-shipping]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      editFriendInfo(btn.getAttribute("data-friend-edit"));
+      editFriendShippingProfiles(btn.getAttribute("data-friend-edit-shipping"));
     });
   });
 
-  els.friendList.querySelectorAll("[data-friend-copy]").forEach((btn) => {
+  els.friendList.querySelectorAll("[data-friend-copy-convenience]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      copyFriendInfo(btn.getAttribute("data-friend-copy"));
+      copyFriendShippingInfo(btn.getAttribute("data-friend-copy-convenience"), "convenience");
+    });
+  });
+
+  els.friendList.querySelectorAll("[data-friend-copy-address]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      copyFriendShippingInfo(btn.getAttribute("data-friend-copy-address"), "address");
     });
   });
 
@@ -522,6 +570,10 @@ function addFriend() {
     id: uid(),
     name: name.trim(),
     receipt_info: { name: "", phone: "", address: "", id_number: "" },
+    shipping_profiles: {
+      convenience: { name: "", phone: "", address: "" },
+      address: { name: "", phone: "", address: "" }
+    },
     parcels: []
   });
   state.selectedFriendId = state.data.friends[state.data.friends.length - 1].id;
@@ -1096,7 +1148,8 @@ function renderShippedSummary() {
   state.data.taiwan_parcel_groups.forEach((g) => {
     groupMetaMap.set((g.tracking_id_taiwan || "").trim(), {
       settlementCny: Number.isFinite(Number(g.settlement_total_cny)) ? Number(g.settlement_total_cny) : null,
-      settlementTwd: Number.isFinite(Number(g.settlement_total_twd)) ? Number(g.settlement_total_twd) : null
+      settlementTwd: Number.isFinite(Number(g.settlement_total_twd)) ? Number(g.settlement_total_twd) : null,
+      shippingMethod: (g.shipping_method || "").trim()
     });
   });
   const groupMap = new Map();
@@ -1110,13 +1163,14 @@ function renderShippedSummary() {
     const ts = Number.isFinite(new Date(shippedAt).getTime()) ? new Date(shippedAt).getTime() : 0;
 
     if (!groupMap.has(taiwanId)) {
-      const meta = groupMetaMap.get(taiwanId) || { settlementCny: null, settlementTwd: null };
+      const meta = groupMetaMap.get(taiwanId) || { settlementCny: null, settlementTwd: null, shippingMethod: "" };
       groupMap.set(taiwanId, {
         taiwanId,
         latestTs: ts,
         latestDate: formatDateOnly(shippedAt),
         settlementCny: meta.settlementCny,
         settlementTwd: meta.settlementTwd,
+        shippingMethod: meta.shippingMethod,
         items: []
       });
     }
@@ -1186,6 +1240,7 @@ function renderShippedSummary() {
       ];
       lines.push("");
       lines.push(`此單號合計重量: ${Number(groupWeight || 0).toFixed(1)}kg`);
+      lines.push(`寄出方式: ${group.shippingMethod || "未填"}`);
       lines.push(`出貨時間: ${group.latestDate}`);
       copyText(lines.join(NL));
     });
@@ -1201,7 +1256,7 @@ function renderShippedSummary() {
 
     const amountInfo = document.createElement("div");
     amountInfo.className = "shipped-amount-info";
-    amountInfo.textContent = `總金額人民幣：${group.settlementCny ?? "-"} | 總金額台幣：${group.settlementTwd ?? "-"}`;
+    amountInfo.textContent = `寄出方式：${group.shippingMethod || "未填"} | 總金額人民幣：${group.settlementCny ?? "-"} | 總金額台幣：${group.settlementTwd ?? "-"}`;
 
     const ownerSelect = document.createElement("select");
     ownerNames.forEach((name) => {
@@ -1264,6 +1319,7 @@ function renderShippedSummary() {
 
       const lines = ownerItems.map((item) => formatItemLine(item));
       lines.push(`總重${formatWeightText(ownerWeight)}kg`);
+      lines.push(`寄出方式: ${group.shippingMethod || "未填"}`);
       lines.push(`人民幣${group.settlementCny}/總重${formatWeightText(groupWeight)} = *${cnyUnit.toFixed(2)}*`);
       lines.push(`${cnyUnit.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerCny.toFixed(2)}*`);
       lines.push(`台幣${group.settlementTwd}/總重${formatWeightText(groupWeight)} = *${twdUnit.toFixed(2)}*`);
@@ -1363,6 +1419,11 @@ function markSelectedShipped() {
   const taiwanList = parseTaiwanTrackingIds(trackingTaiwanRaw);
   if (!taiwanList.length) return toast("已略過操作");
 
+  const methodRaw = prompt("輸入寄出方式（超商/黑貓/新竹，必填）：", "超商");
+  if (methodRaw === null) return toast("已略過操作");
+  const shippingMethod = (methodRaw || "").trim();
+  if (!["超商", "黑貓", "新竹"].includes(shippingMethod)) return toast("寄出方式僅可填：超商/黑貓/新竹");
+
   const cnyRaw = prompt("輸入人民幣總金額（必填）：", "");
   if (cnyRaw === null) return toast("已略過操作");
   const cny = Number.parseFloat((cnyRaw || "").trim());
@@ -1376,6 +1437,7 @@ function markSelectedShipped() {
   const group = upsertTaiwanGroupByTracking(taiwanList.join(String.fromCharCode(10)));
   group.settlement_total_cny = Number(cny.toFixed(2));
   group.settlement_total_twd = Number(twd.toFixed(2));
+  group.shipping_method = shippingMethod;
   selected.forEach((parcel) => {
     parcel.status = "shipped_to_taiwan";
     parcel.taiwan_parcel_group_id = group.id;
@@ -1483,6 +1545,7 @@ async function init() {
   if (els.backHomeBtn) els.backHomeBtn.addEventListener("click", closeSidebarMenu);
 
   const toggleCardByBlankClick = (cardEl, stateKey) => {
+    if (!cardEl) return;
     cardEl.addEventListener("click", (e) => {
       if (e.target.closest("input,textarea,select,button,a,label")) return;
       state[stateKey] = !state[stateKey];
@@ -1492,7 +1555,6 @@ async function init() {
 
   toggleCardByBlankClick(els.addParcelCard, "addParcelCollapsed");
   toggleCardByBlankClick(els.inboundCard, "inboundCollapsed");
-  toggleCardByBlankClick(els.shipCard, "shipCollapsed");
   els.globalTrackingSearch.addEventListener("input", applyGlobalSearchFilter);
 
   els.bulkFriendSelect.addEventListener("change", (e) => {
@@ -1513,8 +1575,8 @@ async function init() {
     copyText(state.bulkInboundCopyText);
   });
 
-  els.bulkShipBtn.addEventListener("click", runBulkShip);
-  els.copyBulkShipResultBtn.addEventListener("click", () => {
+  if (els.bulkShipBtn) els.bulkShipBtn.addEventListener("click", runBulkShip);
+  if (els.copyBulkShipResultBtn) els.copyBulkShipResultBtn.addEventListener("click", () => {
     if (!state.bulkShipCopyText) return toast("目前沒有可複製的批量結果");
     copyText(state.bulkShipCopyText);
   });
@@ -1530,7 +1592,7 @@ async function init() {
   els.markShippedBtn.addEventListener("click", markSelectedShipped);
   els.copyChinaBtn.addEventListener("click", copySelectedChina);
   if (els.copyChinaRemarkBtn) els.copyChinaRemarkBtn.addEventListener("click", copySelectedChinaWithRemark);
-  els.copyTaiwanBtn.addEventListener("click", copySelectedTaiwan);
+  if (els.copyTaiwanBtn) els.copyTaiwanBtn.addEventListener("click", copySelectedTaiwan);
   if (els.shippedTaiwanSearch) {
     els.shippedTaiwanSearch.addEventListener("input", renderShippedSummary);
   }
