@@ -86,7 +86,8 @@ const state = {
   bulkInboundCopyText: "",
   bulkShipCopyText: "",
   sidebarMenuOpen: false,
-  shippingEditingIds: new Set()
+  shippingEditingIds: new Set(),
+  shippingCreateFormKeys: new Set()
 };
 
 const STATUS_LABEL = {
@@ -119,8 +120,29 @@ function parseTaiwanTrackingIds(raw) {
   return [...new Set(parts)];
 }
 
+const UNSET_TAIWAN_PREFIX = "__UNSET_TW__";
+
 function formatTaiwanTrackingDisplay(raw) {
   return parseTaiwanTrackingIds(raw).join(String.fromCharCode(10));
+}
+
+function createUnsetTaiwanTrackingId() {
+  return `${UNSET_TAIWAN_PREFIX}${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function isUnsetTaiwanTrackingId(value) {
+  return (value || "").startsWith(UNSET_TAIWAN_PREFIX);
+}
+
+function getTaiwanTrackingDisplayValue(value) {
+  if (!value) return "";
+  if (isUnsetTaiwanTrackingId(value)) return "未填台灣單號";
+  return formatTaiwanTrackingDisplay(value);
+}
+
+function normalizeTaiwanTrackingInput(raw) {
+  const parsed = parseTaiwanTrackingIds(raw || "");
+  return parsed.length ? parsed.join(String.fromCharCode(10)) : createUnsetTaiwanTrackingId();
 }
 
 const PRIORITY_LABEL = {
@@ -428,6 +450,10 @@ function getShippingListKey(type) {
   return type === "convenience" ? "convenience_list" : "address_list";
 }
 
+function getShippingCreateFormKey(friendId, type) {
+  return `${friendId}:${type}`;
+}
+
 function getShippingTypeLabel(type) {
   return type === "convenience" ? "超商" : "地址";
 }
@@ -474,6 +500,7 @@ function addShippingEntry(friendId, type, payload) {
 
   const list = getFriendShippingList(friend, type);
   list.push({ id: uid(), name, phone, address });
+  state.shippingCreateFormKeys.delete(getShippingCreateFormKey(friendId, type));
   persistAndRender(`已新增${getShippingTypeLabel(type)}資訊`);
 }
 
@@ -505,6 +532,9 @@ function deleteShippingEntry(friendId, type, entryId) {
 
 function renderShippingSection(friend, type, title) {
   const list = getFriendShippingList(friend, type);
+  const formKey = getShippingCreateFormKey(friend.id, type);
+  const showCreateForm = state.shippingCreateFormKeys.has(formKey);
+
   const rows = list.map((item) => {
     const isEditing = state.shippingEditingIds.has(item.id);
     const readonlyAttr = isEditing ? "" : "readonly";
@@ -522,18 +552,24 @@ function renderShippingSection(friend, type, title) {
       </div>`;
   }).join("");
 
-  return `
-    <div class="shipping-section">
-      <div class="shipping-section-title">${title}</div>
-      ${rows || '<div class="shipping-empty">尚無資料</div>'}
+  const createArea = showCreateForm
+    ? `
       <div class="shipping-entry shipping-entry-new" data-shipping-type="${type}">
         <input type="text" data-shipping-new-field="name" placeholder="姓名" />
         <input type="text" data-shipping-new-field="phone" placeholder="電話" />
         <input type="text" data-shipping-new-field="address" placeholder="${title === "超商" ? "門市/地址" : "地址"}" />
-        <div class="button-row tight">
-          <button class="btn small primary" data-friend-add-shipping="${friend.id}" data-shipping-type="${type}">新增${title}資訊</button>
+        <div class="button-row tight wrap">
+          <button class="btn small primary" data-friend-add-shipping="${friend.id}" data-shipping-type="${type}">儲存新增</button>
+          <button class="btn small" data-cancel-shipping-form="${friend.id}" data-shipping-type="${type}">取消</button>
         </div>
-      </div>
+      </div>`
+    : `<div class="button-row tight"><button class="btn small primary" data-open-shipping-form="${friend.id}" data-shipping-type="${type}">新增${title}資訊</button></div>`;
+
+  return `
+    <div class="shipping-section">
+      <div class="shipping-section-title">${title}</div>
+      ${rows || '<div class="shipping-empty">尚無資料</div>'}
+      ${createArea}
     </div>`;
 }
 
@@ -546,6 +582,10 @@ function deleteFriend(friendId) {
   state.selectedParcelIds.clear();
   if (state.selectedFriendId === friendId) state.selectedFriendId = state.data.friends[0]?.id || null;
   if (state.bulkTargetFriendId === friendId) state.bulkTargetFriendId = "";
+
+  for (const key of [...state.shippingCreateFormKeys]) {
+    if (key.startsWith(`${friendId}:`)) state.shippingCreateFormKeys.delete(key);
+  }
 
   persistAndRender("已刪除朋友");
 }
@@ -583,8 +623,31 @@ function renderFriendList() {
     el.addEventListener("click", () => {
       state.selectedFriendId = el.getAttribute("data-friend-select");
       state.selectedParcelIds.clear();
-      closeSidebarMenu();
       render();
+    });
+  });
+
+  els.friendList.querySelectorAll("[data-open-shipping-form]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const key = getShippingCreateFormKey(
+        btn.getAttribute("data-open-shipping-form"),
+        btn.getAttribute("data-shipping-type") || "address"
+      );
+      state.shippingCreateFormKeys.add(key);
+      renderFriendList();
+    });
+  });
+
+  els.friendList.querySelectorAll("[data-cancel-shipping-form]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const key = getShippingCreateFormKey(
+        btn.getAttribute("data-cancel-shipping-form"),
+        btn.getAttribute("data-shipping-type") || "address"
+      );
+      state.shippingCreateFormKeys.delete(key);
+      renderFriendList();
     });
   });
 
@@ -1047,7 +1110,7 @@ function updateSelectedCountUI() {
 function buildParcelRow(parcel, ownerName, className = "") {
   const tr = document.createElement("tr");
   if (className) tr.className = className;
-  const tw = formatTaiwanTrackingDisplay(getTaiwanIdForParcel(parcel));
+  const tw = getTaiwanTrackingDisplayValue(getTaiwanIdForParcel(parcel));
   tr.innerHTML = `
     <td><input type="checkbox" data-parcel-id="${parcel.id}" ${state.selectedParcelIds.has(parcel.id) ? "checked" : ""}></td>
     <td><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></td>
@@ -1069,7 +1132,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
 }
 
 function buildParcelCard(parcel, ownerName, className) {
-  const tw = formatTaiwanTrackingDisplay(getTaiwanIdForParcel(parcel));
+  const tw = getTaiwanTrackingDisplayValue(getTaiwanIdForParcel(parcel));
   const div = document.createElement("div");
   div.className = "parcel-card " + (className || "");
   div.innerHTML = `
@@ -1266,6 +1329,23 @@ function renderParcelRows() {
   updateSelectedCountUI();
 }
 
+function updateTaiwanGroupInfo(rawTaiwanId, nextValues) {
+  const target = state.data.taiwan_parcel_groups.find((g) => (g.tracking_id_taiwan || "").trim() === rawTaiwanId);
+  if (!target) return toast("找不到要修改的已出轉運資料");
+
+  const nextTracking = normalizeTaiwanTrackingInput(nextValues?.trackingId || "");
+  if (nextTracking !== rawTaiwanId) {
+    const duplicated = state.data.taiwan_parcel_groups.some((g) => g.id !== target.id && (g.tracking_id_taiwan || "").trim() === nextTracking);
+    if (duplicated) return toast("台灣單號已存在，請確認後重試");
+  }
+
+  target.tracking_id_taiwan = nextTracking;
+  target.shipping_method = (nextValues?.shippingMethod || "").trim();
+  target.settlement_total_cny = Number(nextValues.cny.toFixed(2));
+  target.settlement_total_twd = Number(nextValues.twd.toFixed(2));
+  persistAndRender("已更新此單資料");
+}
+
 function renderShippedSummary() {
   const NL = String.fromCharCode(10);
   const shippedRows = [];
@@ -1285,7 +1365,8 @@ function renderShippedSummary() {
   const keyword = (els.shippedTaiwanSearch?.value || "").trim().toLowerCase();
   const groupMetaMap = new Map();
   state.data.taiwan_parcel_groups.forEach((g) => {
-    groupMetaMap.set((g.tracking_id_taiwan || "").trim(), {
+    const rawTaiwanId = (g.tracking_id_taiwan || "").trim();
+    groupMetaMap.set(rawTaiwanId, {
       settlementCny: Number.isFinite(Number(g.settlement_total_cny)) ? Number(g.settlement_total_cny) : null,
       settlementTwd: Number.isFinite(Number(g.settlement_total_twd)) ? Number(g.settlement_total_twd) : null,
       shippingMethod: (g.shipping_method || "").trim()
@@ -1294,17 +1375,20 @@ function renderShippedSummary() {
   const groupMap = new Map();
 
   shippedRows.forEach(({ friend, parcel }) => {
-    const taiwanId = formatTaiwanTrackingDisplay(getTaiwanIdForParcel(parcel));
-    if (!taiwanId) return;
-    if (keyword && !taiwanId.toLowerCase().includes(keyword)) return;
+    const rawTaiwanId = (getTaiwanIdForParcel(parcel) || "").trim();
+    if (!rawTaiwanId) return;
+    const displayTaiwanId = getTaiwanTrackingDisplayValue(rawTaiwanId);
+    const searchText = `${displayTaiwanId} ${rawTaiwanId}`.toLowerCase();
+    if (keyword && !searchText.includes(keyword)) return;
 
     const shippedAt = parcel.shipped_to_taiwan_time || "";
     const ts = Number.isFinite(new Date(shippedAt).getTime()) ? new Date(shippedAt).getTime() : 0;
 
-    if (!groupMap.has(taiwanId)) {
-      const meta = groupMetaMap.get(taiwanId) || { settlementCny: null, settlementTwd: null, shippingMethod: "" };
-      groupMap.set(taiwanId, {
-        taiwanId,
+    if (!groupMap.has(rawTaiwanId)) {
+      const meta = groupMetaMap.get(rawTaiwanId) || { settlementCny: null, settlementTwd: null, shippingMethod: "" };
+      groupMap.set(rawTaiwanId, {
+        rawTaiwanId,
+        displayTaiwanId,
         latestTs: ts,
         latestDate: formatDateOnly(shippedAt),
         settlementCny: meta.settlementCny,
@@ -1314,7 +1398,7 @@ function renderShippedSummary() {
       });
     }
 
-    const group = groupMap.get(taiwanId);
+    const group = groupMap.get(rawTaiwanId);
     if (ts >= group.latestTs) {
       group.latestTs = ts;
       group.latestDate = formatDateOnly(shippedAt);
@@ -1361,7 +1445,7 @@ function renderShippedSummary() {
     detail.className = "shipped-group";
 
     const summary = document.createElement("summary");
-    summary.textContent = `台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`;
+    summary.textContent = `台灣單號 ${group.displayTaiwanId} | 日期 ${group.latestDate}`;
     detail.appendChild(summary);
 
     const groupWeight = group.items.reduce((sum, item) => sum + item.weight, 0);
@@ -1374,7 +1458,7 @@ function renderShippedSummary() {
       e.preventDefault();
       e.stopPropagation();
       const lines = [
-        `台灣單號 ${group.taiwanId} | 日期 ${group.latestDate}`,
+        `台灣單號 ${group.displayTaiwanId} | 日期 ${group.latestDate}`,
         ...group.items.map((item) => formatItemLine(item))
       ];
       lines.push("");
@@ -1382,6 +1466,41 @@ function renderShippedSummary() {
       lines.push(`寄出方式: ${group.shippingMethod || "未填"}`);
       lines.push(`出貨時間: ${group.latestDate}`);
       copyText(lines.join(NL));
+    });
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "btn small shipped-copy-btn";
+    editBtn.textContent = "修改";
+    editBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const currentTracking = isUnsetTaiwanTrackingId(group.rawTaiwanId) ? "" : group.rawTaiwanId;
+      const trackingInput = prompt("修改台灣單號（可留空）：", currentTracking);
+      if (trackingInput === null) return;
+
+      const methodInput = prompt("修改寄出方式（超商/黑貓/新竹）：", group.shippingMethod || "超商");
+      if (methodInput === null) return;
+      const shippingMethod = (methodInput || "").trim();
+      if (!["超商", "黑貓", "新竹"].includes(shippingMethod)) return toast("寄出方式僅可填：超商/黑貓/新竹");
+
+      const cnyInput = prompt("修改總金額人民幣：", String(group.settlementCny ?? ""));
+      if (cnyInput === null) return;
+      const cny = Number.parseFloat((cnyInput || "").trim());
+      if (!Number.isFinite(cny) || cny < 0) return toast("人民幣金額格式錯誤");
+
+      const twdInput = prompt("修改總金額台幣：", String(group.settlementTwd ?? ""));
+      if (twdInput === null) return;
+      const twd = Number.parseFloat((twdInput || "").trim());
+      if (!Number.isFinite(twd) || twd < 0) return toast("台幣金額格式錯誤");
+
+      updateTaiwanGroupInfo(group.rawTaiwanId, {
+        trackingId: trackingInput,
+        shippingMethod,
+        cny,
+        twd
+      });
     });
 
     const ownerWeightMap = new Map();
@@ -1490,6 +1609,7 @@ function renderShippedSummary() {
     footer.innerHTML = `此單號合計重量: ${Number(groupWeight || 0).toFixed(1)}kg<br>出貨時間: ${group.latestDate}`;
 
     detail.appendChild(copyBtn);
+    detail.appendChild(editBtn);
     detail.appendChild(amountInfo);
     detail.appendChild(tools);
     detail.appendChild(ul);
@@ -1554,9 +1674,8 @@ function markSelectedShipped() {
   const hasPending = selected.some((parcel) => parcel.status === "pending_arrival");
   if (hasPending && !confirm("選取中包含『未到集運倉』單號，確定仍要改為已出轉運嗎？")) return;
 
-  const trackingTaiwanRaw = prompt("輸入台灣單號(留空略過；可用逗號分隔多個)：") || "";
-  const taiwanList = parseTaiwanTrackingIds(trackingTaiwanRaw);
-  if (!taiwanList.length) return toast("已略過操作");
+  const trackingTaiwanRaw = prompt("輸入台灣單號（可留空，之後可在此單修改）：") || "";
+  const taiwanTrackingId = normalizeTaiwanTrackingInput(trackingTaiwanRaw);
 
   const methodRaw = prompt("輸入寄出方式（超商/黑貓/新竹，必填）：", "超商");
   if (methodRaw === null) return toast("已略過操作");
@@ -1573,7 +1692,7 @@ function markSelectedShipped() {
   const twd = Number.parseFloat((twdRaw || "").trim());
   if (!Number.isFinite(twd) || twd < 0) return toast("台幣金額格式錯誤");
 
-  const group = upsertTaiwanGroupByTracking(taiwanList.join(String.fromCharCode(10)));
+  const group = upsertTaiwanGroupByTracking(taiwanTrackingId);
   group.settlement_total_cny = Number(cny.toFixed(2));
   group.settlement_total_twd = Number(twd.toFixed(2));
   group.shipping_method = shippingMethod;
@@ -1616,7 +1735,9 @@ function copySelectedTaiwan() {
   state.data.friends.forEach((friend) => {
     friend.parcels.forEach((parcel) => {
       if (!state.selectedParcelIds.has(parcel.id)) return;
-      const tw = formatTaiwanTrackingDisplay(getTaiwanIdForParcel(parcel));
+      const rawTaiwanId = (getTaiwanIdForParcel(parcel) || "").trim();
+      if (!rawTaiwanId || isUnsetTaiwanTrackingId(rawTaiwanId)) return;
+      const tw = formatTaiwanTrackingDisplay(rawTaiwanId);
       parseTaiwanTrackingIds(tw).forEach((id) => taiwanIds.add(id));
     });
   });
