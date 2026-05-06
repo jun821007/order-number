@@ -85,7 +85,8 @@ const state = {
   tableOwnerFilter: "all",
   bulkInboundCopyText: "",
   bulkShipCopyText: "",
-  sidebarMenuOpen: false
+  sidebarMenuOpen: false,
+  shippingEditingIds: new Set()
 };
 
 const STATUS_LABEL = {
@@ -486,6 +487,7 @@ function saveShippingEntry(friendId, type, entryId, payload) {
   entry.name = (payload?.name || "").trim();
   entry.phone = (payload?.phone || "").trim();
   entry.address = (payload?.address || "").trim();
+  state.shippingEditingIds.delete(entryId);
   persistAndRender(`已更新${getShippingTypeLabel(type)}資訊`);
 }
 
@@ -495,20 +497,25 @@ function deleteShippingEntry(friendId, type, entryId) {
   const list = getFriendShippingList(friend, type);
   const label = getShippingTypeLabel(type);
   if (!confirm(`確定刪除此筆${label}資訊？`)) return;
+  if (!confirm("刪除後無法復原，確定刪除？")) return;
   friend.shipping_profiles[getShippingListKey(type)] = list.filter((item) => item.id !== entryId);
+  state.shippingEditingIds.delete(entryId);
   persistAndRender(`已刪除${label}資訊`);
 }
 
 function renderShippingSection(friend, type, title) {
   const list = getFriendShippingList(friend, type);
   const rows = list.map((item) => {
+    const isEditing = state.shippingEditingIds.has(item.id);
+    const readonlyAttr = isEditing ? "" : "readonly";
+    const entryClass = isEditing ? "shipping-entry" : "shipping-entry shipping-entry-readonly";
     return `
-      <div class="shipping-entry" data-shipping-entry-id="${item.id}" data-shipping-type="${type}">
-        <input type="text" data-shipping-field="name" placeholder="姓名" value="${escapeAttr(item.name)}" />
-        <input type="text" data-shipping-field="phone" placeholder="電話" value="${escapeAttr(item.phone)}" />
-        <input type="text" data-shipping-field="address" placeholder="${title === "超商" ? "門市/地址" : "地址"}" value="${escapeAttr(item.address)}" />
+      <div class="${entryClass}" data-shipping-entry-id="${item.id}" data-shipping-type="${type}">
+        <input type="text" data-shipping-field="name" placeholder="姓名" value="${escapeAttr(item.name)}" ${readonlyAttr} />
+        <input type="text" data-shipping-field="phone" placeholder="電話" value="${escapeAttr(item.phone)}" ${readonlyAttr} />
+        <input type="text" data-shipping-field="address" placeholder="${title === "超商" ? "門市/地址" : "地址"}" value="${escapeAttr(item.address)}" ${readonlyAttr} />
         <div class="button-row tight wrap">
-          <button class="btn small" data-friend-save-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">儲存</button>
+          <button class="btn small" data-friend-save-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">${isEditing ? "儲存" : "修改"}</button>
           <button class="btn small" data-friend-copy-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">複製資訊</button>
           <button class="btn danger small" data-friend-delete-shipping="${friend.id}" data-shipping-type="${type}" data-shipping-entry-id="${item.id}">刪除</button>
         </div>
@@ -602,6 +609,12 @@ function renderFriendList() {
   els.friendList.querySelectorAll("[data-friend-save-shipping]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
+      const entryId = btn.getAttribute("data-shipping-entry-id");
+      if (!state.shippingEditingIds.has(entryId)) {
+        state.shippingEditingIds.add(entryId);
+        renderFriendList();
+        return;
+      }
       const wrapper = btn.closest(".shipping-entry");
       if (!wrapper) return;
       const payload = {
@@ -612,7 +625,7 @@ function renderFriendList() {
       saveShippingEntry(
         btn.getAttribute("data-friend-save-shipping"),
         btn.getAttribute("data-shipping-type") || "address",
-        btn.getAttribute("data-shipping-entry-id"),
+        entryId,
         payload
       );
     });

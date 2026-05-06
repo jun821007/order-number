@@ -447,6 +447,12 @@ th, td {
   padding: 6px 8px;
 }
 
+.shipping-entry-readonly input[readonly] {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #d1d5db;
+}
+
 .shipping-entry-new {
   border-style: dashed;
   background: #f9fbff;
