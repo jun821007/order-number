@@ -905,6 +905,7 @@ function runBulkInbound() {
 
   els.bulkInboundResult.textContent = output.join("\n").trim() || "沒有可處理資料";
   state.bulkInboundCopyText = processed.join("\n");
+  state.bulkInboundCopyWeightTrackingRemarkText = processedWeightTrackingRemark.join("\n");
 
   if (processed.length) {
     persistAndRender(`已批量入庫 ${processed.length} 件${missing.length ? `，未key ${missing.length} 件` : ""}`);
