@@ -1582,7 +1582,7 @@ function renderShippedSummary() {
       const ownerCny = cnyUnit * ownerWeight;
       const ownerTwd = twdUnit * ownerWeight;
 
-      const lines = ownerItems.map((item) => formatItemLine(item));
+      const lines = [`台灣單號 ${group.displayTaiwanId}`, ...ownerItems.map((item) => formatItemLine(item))];
       lines.push(`總重${formatWeightText(ownerWeight)}kg`);
       lines.push(`寄出方式: ${group.shippingMethod || "未填"}`);
       lines.push(`人民幣${group.settlementCny}/總重${formatWeightText(groupWeight)} = *${cnyUnit.toFixed(2)}*`);
