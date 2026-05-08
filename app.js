@@ -34,6 +34,7 @@ const els = {
   bulkInboundPriority: document.getElementById("bulkInboundPriority"),
   bulkInboundBtn: document.getElementById("bulkInboundBtn"),
   copyBulkInboundResultBtn: document.getElementById("copyBulkInboundResultBtn"),
+  copyBulkInboundWeightTrackingRemarkBtn: document.getElementById("copyBulkInboundWeightTrackingRemarkBtn"),
   bulkInboundResult: document.getElementById("bulkInboundResult"),
 
   shipCard: document.getElementById("shipCard"),
@@ -84,6 +85,7 @@ const state = {
   shipCollapsed: true,
   tableOwnerFilter: "all",
   bulkInboundCopyText: "",
+  bulkInboundCopyWeightTrackingRemarkText: "",
   bulkShipCopyText: "",
   sidebarMenuOpen: false,
   shippingEditingIds: new Set(),
@@ -857,6 +859,7 @@ function runBulkInbound() {
   const now = nowIso();
 
   const processed = [];
+  const processedWeightTrackingRemark = [];
   const invalid = [];
   const missing = [];
 
@@ -884,7 +887,11 @@ function runBulkInbound() {
         linkParcelToTaiwanGroup(parcel.id, "");
         parcel.taiwan_parcel_group_id = null;
       }
-      processed.push(`${Number(parcel.weight_kg || 0).toFixed(1)} ${parcel.tracking_id_china} ${ownerCode(friend.name)}`);
+      const weightText = Number(parcel.weight_kg || 0).toFixed(1);
+      const ownerName = friend.name || "-";
+      const remarkText = (parcel.remark || "").trim() || "-";
+      processed.push(`${weightText} ${parcel.tracking_id_china} ${ownerName} ${remarkText}`);
+      processedWeightTrackingRemark.push(`${weightText} ${parcel.tracking_id_china} ${remarkText}`);
     });
   });
 
@@ -1834,6 +1841,12 @@ async function init() {
     if (!state.bulkInboundCopyText) return toast("目前沒有可複製的批量入庫結果");
     copyText(state.bulkInboundCopyText);
   });
+  if (els.copyBulkInboundWeightTrackingRemarkBtn) {
+    els.copyBulkInboundWeightTrackingRemarkBtn.addEventListener("click", () => {
+      if (!state.bulkInboundCopyWeightTrackingRemarkText) return toast("目前沒有可複製資料");
+      copyText(state.bulkInboundCopyWeightTrackingRemarkText);
+    });
+  }
 
   if (els.bulkShipBtn) els.bulkShipBtn.addEventListener("click", runBulkShip);
   if (els.copyBulkShipResultBtn) els.copyBulkShipResultBtn.addEventListener("click", () => {
