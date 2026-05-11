@@ -410,6 +410,22 @@ th, td {
   font-weight: 600;
 }
 
+
+.friend-shipping-details {
+  margin-top: 8px;
+}
+
+.friend-shipping-details > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: #1f2937;
+  font-size: 13px;
+}
+
+.friend-shipping-details[open] > summary {
+  margin-bottom: 8px;
+}
+
 .friend-inline-info {
   margin-top: 8px;
   color: #4b5563;

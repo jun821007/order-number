@@ -616,7 +616,7 @@ function renderFriendList() {
           <button class="btn danger small" data-friend-delete="${friend.id}">刪除</button>
         </div>
       </div>
-      ${selected ? `<div class="friend-inline-info">${renderShippingSection(friend, "address", "地址")}${renderShippingSection(friend, "convenience", "超商")}</div>` : ""}
+      ${selected ? `<details class="friend-shipping-details"><summary>寄件資訊</summary><div class="friend-inline-info">${renderShippingSection(friend, "address", "地址")}${renderShippingSection(friend, "convenience", "超商")}</div></details>` : ""}
     `;
     els.friendList.appendChild(li);
   });
@@ -1730,11 +1730,12 @@ function copySelectedChinaWithRemark() {
   state.data.friends.forEach((friend) => {
     friend.parcels.forEach((parcel) => {
       if (!state.selectedParcelIds.has(parcel.id)) return;
+      const weightText = Number(parcel.weight_kg || 0).toFixed(1);
       const remark = (parcel.remark || "").trim();
-      text.push(remark ? `${parcel.tracking_id_china} ${remark}` : parcel.tracking_id_china);
+      text.push(remark ? `${weightText} ${parcel.tracking_id_china} ${remark}` : `${weightText} ${parcel.tracking_id_china}`);
     });
   });
-  if (!text.length) return toast("\u6c92\u6709\u53ef\u8907\u88fd\u8cc7\u6599");
+  if (!text.length) return toast("沒有可複製資料");
   copyText(text.join("\n"));
 }
 
