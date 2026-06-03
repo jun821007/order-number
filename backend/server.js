@@ -60,7 +60,8 @@ function normalizeDataShape(raw) {
     ...group,
     settlement_total_cny: Number.isFinite(Number(group?.settlement_total_cny)) ? Number(group.settlement_total_cny) : null,
     settlement_total_twd: Number.isFinite(Number(group?.settlement_total_twd)) ? Number(group.settlement_total_twd) : null,
-    shipping_method: (group?.shipping_method || "").trim()
+    shipping_method: (group?.shipping_method || "").trim(),
+    shipping_address: (group?.shipping_address || "").trim()
   }));
   return { friends, taiwan_parcel_groups: groups };
 }

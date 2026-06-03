@@ -280,7 +280,8 @@ function normalizeDataShape(raw) {
     ...group,
     settlement_total_cny: Number.isFinite(Number(group?.settlement_total_cny)) ? Number(group.settlement_total_cny) : null,
     settlement_total_twd: Number.isFinite(Number(group?.settlement_total_twd)) ? Number(group.settlement_total_twd) : null,
-    shipping_method: (group?.shipping_method || "").trim()
+    shipping_method: (group?.shipping_method || "").trim(),
+    shipping_address: (group?.shipping_address || "").trim()
   }));
 
   return { friends, taiwan_parcel_groups: groups };
@@ -396,6 +397,7 @@ function upsertTaiwanGroupByTracking(trackingId) {
       settlement_total_cny: null,
       settlement_total_twd: null,
       shipping_method: "",
+      shipping_address: "",
       created_at: nowIso()
     };
     state.data.taiwan_parcel_groups.push(group);
@@ -1349,6 +1351,7 @@ function updateTaiwanGroupInfo(rawTaiwanId, nextValues) {
 
   target.tracking_id_taiwan = nextTracking;
   target.shipping_method = (nextValues?.shippingMethod || "").trim();
+  target.shipping_address = (nextValues?.shippingAddress || "").trim();
   target.settlement_total_cny = Number(nextValues.cny.toFixed(2));
   target.settlement_total_twd = Number(nextValues.twd.toFixed(2));
   persistAndRender("已更新此單資料");
@@ -1377,7 +1380,8 @@ function renderShippedSummary() {
     groupMetaMap.set(rawTaiwanId, {
       settlementCny: Number.isFinite(Number(g.settlement_total_cny)) ? Number(g.settlement_total_cny) : null,
       settlementTwd: Number.isFinite(Number(g.settlement_total_twd)) ? Number(g.settlement_total_twd) : null,
-      shippingMethod: (g.shipping_method || "").trim()
+      shippingMethod: (g.shipping_method || "").trim(),
+      shippingAddress: (g.shipping_address || "").trim()
     });
   });
   const groupMap = new Map();
@@ -1393,7 +1397,7 @@ function renderShippedSummary() {
     const ts = Number.isFinite(new Date(shippedAt).getTime()) ? new Date(shippedAt).getTime() : 0;
 
     if (!groupMap.has(rawTaiwanId)) {
-      const meta = groupMetaMap.get(rawTaiwanId) || { settlementCny: null, settlementTwd: null, shippingMethod: "" };
+      const meta = groupMetaMap.get(rawTaiwanId) || { settlementCny: null, settlementTwd: null, shippingMethod: "", shippingAddress: "" };
       groupMap.set(rawTaiwanId, {
         rawTaiwanId,
         displayTaiwanId,
@@ -1402,6 +1406,7 @@ function renderShippedSummary() {
         settlementCny: meta.settlementCny,
         settlementTwd: meta.settlementTwd,
         shippingMethod: meta.shippingMethod,
+        shippingAddress: meta.shippingAddress,
         items: []
       });
     }
@@ -1453,7 +1458,16 @@ function renderShippedSummary() {
     detail.className = "shipped-group";
 
     const summary = document.createElement("summary");
-    summary.textContent = `台灣單號 ${group.displayTaiwanId} | 日期 ${group.latestDate}`;
+    const summaryTaiwan = document.createElement("span");
+    summaryTaiwan.className = "tw-copy-trigger";
+    summaryTaiwan.textContent = `台灣單號 ${group.displayTaiwanId}`;
+    summaryTaiwan.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isUnsetTaiwanTrackingId(group.rawTaiwanId)) return toast("此單尚未填台灣單號");
+      copyText(formatTaiwanTrackingDisplay(group.rawTaiwanId));
+    });
+    summary.append(summaryTaiwan, document.createTextNode(` | 日期 ${group.latestDate}`));
     detail.appendChild(summary);
 
     const groupWeight = group.items.reduce((sum, item) => sum + item.weight, 0);
@@ -1472,6 +1486,7 @@ function renderShippedSummary() {
       lines.push("");
       lines.push(`此單號合計重量: ${Number(groupWeight || 0).toFixed(1)}kg`);
       lines.push(`寄出方式: ${group.shippingMethod || "未填"}`);
+      lines.push(`地址: ${group.shippingAddress || "-"}`);
       lines.push(`出貨時間: ${group.latestDate}`);
       copyText(lines.join(NL));
     });
@@ -1493,6 +1508,10 @@ function renderShippedSummary() {
       const shippingMethod = (methodInput || "").trim();
       if (!["超商", "黑貓", "新竹"].includes(shippingMethod)) return toast("寄出方式僅可填：超商/黑貓/新竹");
 
+      const shippingAddressInput = prompt("修改地址/門市（可空白）：", group.shippingAddress || "");
+      if (shippingAddressInput === null) return;
+      const shippingAddress = (shippingAddressInput || "").trim();
+
       const cnyInput = prompt("修改總金額人民幣：", String(group.settlementCny ?? ""));
       if (cnyInput === null) return;
       const cny = Number.parseFloat((cnyInput || "").trim());
@@ -1506,6 +1525,7 @@ function renderShippedSummary() {
       updateTaiwanGroupInfo(group.rawTaiwanId, {
         trackingId: trackingInput,
         shippingMethod,
+        shippingAddress,
         cny,
         twd
       });
@@ -1522,7 +1542,7 @@ function renderShippedSummary() {
 
     const amountInfo = document.createElement("div");
     amountInfo.className = "shipped-amount-info";
-    amountInfo.textContent = `寄出方式：${group.shippingMethod || "未填"} | 總金額人民幣：${group.settlementCny ?? "-"} | 總金額台幣：${group.settlementTwd ?? "-"}`;
+    amountInfo.textContent = `寄出方式：${group.shippingMethod || "未填"} | 地址：${group.shippingAddress || "-"} | 總金額人民幣：${group.settlementCny ?? "-"} | 總金額台幣：${group.settlementTwd ?? "-"}`;
 
     const ownerSelect = document.createElement("select");
     ownerNames.forEach((name) => {
@@ -1586,6 +1606,7 @@ function renderShippedSummary() {
       const lines = [`台灣單號 ${group.displayTaiwanId}`, ...ownerItems.map((item) => formatItemLine(item))];
       lines.push(`總重${formatWeightText(ownerWeight)}kg`);
       lines.push(`寄出方式: ${group.shippingMethod || "未填"}`);
+      lines.push(`地址: ${group.shippingAddress || "-"}`);
       lines.push(`人民幣${group.settlementCny}/總重${formatWeightText(groupWeight)} = *${cnyUnit.toFixed(2)}*`);
       lines.push(`${cnyUnit.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerCny.toFixed(2)}*`);
       lines.push(`台幣${group.settlementTwd}/總重${formatWeightText(groupWeight)} = *${twdUnit.toFixed(2)}*`);
@@ -1690,6 +1711,10 @@ function markSelectedShipped() {
   const shippingMethod = (methodRaw || "").trim();
   if (!["超商", "黑貓", "新竹"].includes(shippingMethod)) return toast("寄出方式僅可填：超商/黑貓/新竹");
 
+  const shippingAddressRaw = prompt("輸入地址/門市（可空白）：", "");
+  if (shippingAddressRaw === null) return toast("已略過操作");
+  const shippingAddress = (shippingAddressRaw || "").trim();
+
   const cnyRaw = prompt("輸入人民幣總金額（必填）：", "");
   if (cnyRaw === null) return toast("已略過操作");
   const cny = Number.parseFloat((cnyRaw || "").trim());
@@ -1704,6 +1729,7 @@ function markSelectedShipped() {
   group.settlement_total_cny = Number(cny.toFixed(2));
   group.settlement_total_twd = Number(twd.toFixed(2));
   group.shipping_method = shippingMethod;
+  group.shipping_address = shippingAddress;
   selected.forEach((parcel) => {
     parcel.status = "shipped_to_taiwan";
     parcel.taiwan_parcel_group_id = group.id;

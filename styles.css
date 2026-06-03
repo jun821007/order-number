@@ -242,6 +242,12 @@ th, td {
   white-space: pre-line;
 }
 
+.tw-copy-trigger {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .selected-count {
   color: #64748b;
   font-size: 12px;
