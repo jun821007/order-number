@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const cors = require("cors");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -93,7 +93,7 @@ async function ensureDataFile() {
 async function readDataFile() {
   await ensureDataFile();
   const raw = await fs.readFile(activeDataFilePath, "utf8");
-  const parsed = JSON.parse((raw || "{}").replace(/^﻿/, ""));
+  const parsed = JSON.parse((raw || "{}").replace(/^嚜?, ""));
   return normalizeDataShape(parsed);
 }
 
@@ -171,6 +171,113 @@ app.patch("/api/order-tool/data", async (req, res) => {
   }
 });
 
+
+const HORUS_READ_SECRET = (process.env.HORUS_READ_SECRET || "").trim();
+const UNSET_TAIWAN_PREFIX = "__UNSET_TW__";
+
+function requireHorusSecret(req, res, next) {
+  if (!HORUS_READ_SECRET) {
+    return res.status(503).json({ ok: false, error: "HORUS_READ_SECRET not configured" });
+  }
+  const auth = (req.headers.authorization || "").trim();
+  if (auth !== `Bearer ${HORUS_READ_SECRET}`) {
+    return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
+  return next();
+}
+
+function parseTaiwanTrackingIds(raw) {
+  const lf = String.fromCharCode(10);
+  const cr = String.fromCharCode(13);
+  const normalized = (raw || "").replaceAll("，", ",").replaceAll(cr, lf);
+  const parts = normalized
+    .split(",")
+    .flatMap((part) => part.split(lf))
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return [...new Set(parts)];
+}
+
+function isUnsetTaiwanTrackingId(value) {
+  return (value || "").startsWith(UNSET_TAIWAN_PREFIX);
+}
+
+function digitsOnly(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function buildShippedTracks(data, days) {
+  const groupById = new Map();
+  for (const group of data.taiwan_parcel_groups || []) {
+    groupById.set(group.id, group);
+  }
+
+  const cutoff = Date.now() - Math.max(1, Number(days) || 7) * 24 * 60 * 60 * 1000;
+  const byTracking = new Map();
+
+  for (const friend of data.friends || []) {
+    for (const parcel of friend.parcels || []) {
+      if (parcel.status !== "shipped_to_taiwan") continue;
+
+      const shippedAt = parcel.shipped_to_taiwan_time || "";
+      const shippedTs = Date.parse(shippedAt);
+      if (Number.isFinite(shippedTs) && shippedTs < cutoff) continue;
+
+      const group = groupById.get(parcel.taiwan_parcel_group_id);
+      const rawTaiwanId = (group?.tracking_id_taiwan || "").trim();
+      if (!rawTaiwanId || isUnsetTaiwanTrackingId(rawTaiwanId)) continue;
+
+      const trackingIds = parseTaiwanTrackingIds(rawTaiwanId);
+      for (const rawId of trackingIds) {
+        const trackingNumber = digitsOnly(rawId);
+        if (!trackingNumber) continue;
+
+        const contentParts = [friend.name, parcel.remark].filter(Boolean);
+        const contentSummary = contentParts.join(" · ");
+        const item = {
+          tracking_number: trackingNumber,
+          friend_name: friend.name || "",
+          remark: parcel.remark || "",
+          china_tracking: parcel.tracking_id_china || "",
+          shipped_at: shippedAt || null,
+          shipping_method: (group?.shipping_method || "").trim(),
+        };
+
+        const prev = byTracking.get(trackingNumber);
+        if (!prev) {
+          byTracking.set(trackingNumber, { ...item, content_summary: contentSummary });
+          continue;
+        }
+
+        const prevTs = Date.parse(prev.shipped_at || "");
+        const nextTs = Date.parse(item.shipped_at || "");
+        const keep = Number.isFinite(nextTs) && (!Number.isFinite(prevTs) || nextTs >= prevTs) ? item : prev;
+        const merge = keep === item ? item : prev;
+        const summaries = new Set([prev.content_summary, contentSummary].filter(Boolean));
+        byTracking.set(trackingNumber, {
+          ...merge,
+          content_summary: [...summaries].join(" / "),
+        });
+      }
+    }
+  }
+
+  const items = [...byTracking.values()].sort((a, b) => Date.parse(b.shipped_at || 0) - Date.parse(a.shipped_at || 0));
+  return items;
+}
+
+app.get("/api/horus/shipped-tracks", requireHorusSecret, async (req, res) => {
+  try {
+    const days = Number(req.query.days || 7);
+    const data = await readDataFile();
+    const items = buildShippedTracks(data, days);
+    return res.json({ ok: true, period_days: Math.max(1, Number(days) || 7), count: items.length, items });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "READ_FAILED" });
+  }
+});
+
 process.on("uncaughtException", (error) => {
   console.error("Uncaught exception:", error);
 });
@@ -190,3 +297,4 @@ app.listen(PORT, "0.0.0.0", () => {
       console.error("Data file initialization failed:", error);
     });
 });
+
