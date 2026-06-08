@@ -35,6 +35,7 @@ const els = {
   bulkInboundBtn: document.getElementById("bulkInboundBtn"),
   copyBulkInboundResultBtn: document.getElementById("copyBulkInboundResultBtn"),
   copyBulkInboundWeightTrackingRemarkBtn: document.getElementById("copyBulkInboundWeightTrackingRemarkBtn"),
+  copyBulkInboundWeightRemarkBtn: document.getElementById("copyBulkInboundWeightRemarkBtn"),
   bulkInboundResult: document.getElementById("bulkInboundResult"),
 
   shipCard: document.getElementById("shipCard"),
@@ -86,6 +87,7 @@ const state = {
   tableOwnerFilter: "all",
   bulkInboundCopyText: "",
   bulkInboundCopyWeightTrackingRemarkText: "",
+  bulkInboundCopyWeightRemarkText: "",
   bulkShipCopyText: "",
   sidebarMenuOpen: false,
   shippingEditingIds: new Set(),
@@ -862,6 +864,7 @@ function runBulkInbound() {
 
   const processed = [];
   const processedWeightTrackingRemark = [];
+  const processedWeightRemark = [];
   const invalid = [];
   const missing = [];
 
@@ -894,6 +897,7 @@ function runBulkInbound() {
       const remarkText = (parcel.remark || "").trim() || "-";
       processed.push(`${weightText} ${parcel.tracking_id_china} ${ownerName} ${remarkText}`);
       processedWeightTrackingRemark.push(`${weightText} ${parcel.tracking_id_china} ${remarkText}`);
+      processedWeightRemark.push(`${weightText} ${parcel.tracking_id_china} ${remarkText}`);
     });
   });
 
@@ -908,6 +912,7 @@ function runBulkInbound() {
   els.bulkInboundResult.textContent = output.join("\n").trim() || "沒有可處理資料";
   state.bulkInboundCopyText = processed.join("\n");
   state.bulkInboundCopyWeightTrackingRemarkText = processedWeightTrackingRemark.join("\n");
+  state.bulkInboundCopyWeightRemarkText = processedWeightRemark.join("\n");
 
   if (processed.length) {
     persistAndRender(`已批量入庫 ${processed.length} 件${missing.length ? `，未key ${missing.length} 件` : ""}`);
@@ -1873,6 +1878,12 @@ async function init() {
     els.copyBulkInboundWeightTrackingRemarkBtn.addEventListener("click", () => {
       if (!state.bulkInboundCopyWeightTrackingRemarkText) return toast("目前沒有可複製資料");
       copyText(state.bulkInboundCopyWeightTrackingRemarkText);
+    });
+  }
+  if (els.copyBulkInboundWeightRemarkBtn) {
+    els.copyBulkInboundWeightRemarkBtn.addEventListener("click", () => {
+      if (!state.bulkInboundCopyWeightRemarkText) return toast("目前沒有可複製資料");
+      copyText(state.bulkInboundCopyWeightRemarkText);
     });
   }
 
