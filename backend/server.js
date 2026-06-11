@@ -342,12 +342,47 @@ function buildShippedTracks(data, days) {
   return items;
 }
 
+function lookupShippingAddress(data, trackingNumber) {
+  for (const group of data.taiwan_parcel_groups || []) {
+    const rawTaiwanId = (group?.tracking_id_taiwan || "").trim();
+    if (!rawTaiwanId || isUnsetTaiwanTrackingId(rawTaiwanId)) continue;
+
+    const method = (group?.shipping_method || "").trim();
+    for (const rawId of parseTaiwanTrackingIds(rawTaiwanId)) {
+      if (normalizeTrackingForHorus(rawId, method) === trackingNumber) {
+        return (group.shipping_address || "").trim();
+      }
+    }
+  }
+  return "";
+}
+
 app.get("/api/horus/shipped-tracks", requireHorusSecret, async (req, res) => {
   try {
     const days = Number(req.query.days || 7);
     const data = await readDataFile();
     const items = buildShippedTracks(data, days);
     return res.json({ ok: true, period_days: Math.max(1, Number(days) || 7), count: items.length, items });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "READ_FAILED" });
+  }
+});
+
+app.get("/api/horus/address-by-tracking", requireHorusSecret, async (req, res) => {
+  try {
+    const method = String(req.query.method || "").trim();
+    const trackingNumber = normalizeTrackingForHorus(String(req.query.tracking || ""), method);
+    if (!trackingNumber) {
+      return res.status(400).json({ ok: false, error: "INVALID_TRACKING" });
+    }
+
+    const data = await readDataFile();
+    return res.json({
+      ok: true,
+      tracking_number: trackingNumber,
+      shipping_address: lookupShippingAddress(data, trackingNumber),
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ ok: false, error: "READ_FAILED" });
