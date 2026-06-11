@@ -93,7 +93,7 @@ async function ensureDataFile() {
 async function readDataFile() {
   await ensureDataFile();
   const raw = await fs.readFile(activeDataFilePath, "utf8");
-  const parsed = JSON.parse((raw || "{}").replace(/^嚜?, ""));
+  const parsed = JSON.parse((raw || "{}").replace(/^\uFEFF/, ""));
   return normalizeDataShape(parsed);
 }
 
@@ -206,6 +206,14 @@ function digitsOnly(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function normalizeTrackingForHorus(rawId, shippingMethod) {
+  const compact = String(rawId || "").trim().replace(/\s+/g, "");
+  if ((shippingMethod || "").trim() === "超商" || /[a-zA-Z]/.test(compact)) {
+    return compact.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  }
+  return digitsOnly(compact);
+}
+
 function buildShippedTracks(data, days) {
   const groupById = new Map();
   for (const group of data.taiwan_parcel_groups || []) {
@@ -229,7 +237,8 @@ function buildShippedTracks(data, days) {
 
       const trackingIds = parseTaiwanTrackingIds(rawTaiwanId);
       for (const rawId of trackingIds) {
-        const trackingNumber = digitsOnly(rawId);
+        const shippingMethod = (group?.shipping_method || "").trim();
+        const trackingNumber = normalizeTrackingForHorus(rawId, shippingMethod);
         if (!trackingNumber) continue;
 
         const contentParts = [friend.name, parcel.remark].filter(Boolean);
@@ -240,7 +249,7 @@ function buildShippedTracks(data, days) {
           remark: parcel.remark || "",
           china_tracking: parcel.tracking_id_china || "",
           shipped_at: shippedAt || null,
-          shipping_method: (group?.shipping_method || "").trim(),
+          shipping_method: shippingMethod,
         };
 
         const prev = byTracking.get(trackingNumber);
