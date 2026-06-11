@@ -214,6 +214,30 @@ function normalizeTrackingForHorus(rawId, shippingMethod) {
   return digitsOnly(compact);
 }
 
+function mergeParcelItems(existing, friendName, remark) {
+  const items = Array.isArray(existing) ? [...existing] : [];
+  items.push({
+    friend_name: (friendName || "").trim(),
+    remark: (remark || "").trim(),
+  });
+  return items;
+}
+
+function dedupeParcelItems(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const name = (item.friend_name || "").trim();
+    const remark = (item.remark || "").trim();
+    if (!remark) continue;
+    const key = `${name}\0${remark}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ friend_name: name, remark });
+  }
+  return out;
+}
+
 function buildShippedTracks(data, days) {
   const groupById = new Map();
   for (const group of data.taiwan_parcel_groups || []) {
@@ -241,31 +265,37 @@ function buildShippedTracks(data, days) {
         const trackingNumber = normalizeTrackingForHorus(rawId, shippingMethod);
         if (!trackingNumber) continue;
 
-        const contentParts = [friend.name, parcel.remark].filter(Boolean);
-        const contentSummary = contentParts.join(" · ");
-        const item = {
-          tracking_number: trackingNumber,
-          friend_name: friend.name || "",
-          remark: parcel.remark || "",
-          china_tracking: parcel.tracking_id_china || "",
-          shipped_at: shippedAt || null,
-          shipping_method: shippingMethod,
+        const shippingAddress = (group?.shipping_address || "").trim();
+        const parcelLine = {
+          friend_name: (friend.name || "").trim(),
+          remark: (parcel.remark || "").trim(),
         };
 
         const prev = byTracking.get(trackingNumber);
         if (!prev) {
-          byTracking.set(trackingNumber, { ...item, content_summary: contentSummary });
+          byTracking.set(trackingNumber, {
+            tracking_number: trackingNumber,
+            friend_name: friend.name || "",
+            remark: parcel.remark || "",
+            china_tracking: parcel.tracking_id_china || "",
+            shipped_at: shippedAt || null,
+            shipping_method: shippingMethod,
+            shipping_address: shippingAddress,
+            parcel_items: dedupeParcelItems([parcelLine]),
+          });
           continue;
         }
 
         const prevTs = Date.parse(prev.shipped_at || "");
-        const nextTs = Date.parse(item.shipped_at || "");
-        const keep = Number.isFinite(nextTs) && (!Number.isFinite(prevTs) || nextTs >= prevTs) ? item : prev;
-        const merge = keep === item ? item : prev;
-        const summaries = new Set([prev.content_summary, contentSummary].filter(Boolean));
+        const nextTs = Date.parse(shippedAt || "");
+        const keepNewer = Number.isFinite(nextTs) && (!Number.isFinite(prevTs) || nextTs >= prevTs);
+        const base = keepNewer ? { ...prev, shipped_at: shippedAt || prev.shipped_at } : { ...prev };
+        if (keepNewer && shippingAddress) base.shipping_address = shippingAddress;
+        if (!base.shipping_address && shippingAddress) base.shipping_address = shippingAddress;
+
         byTracking.set(trackingNumber, {
-          ...merge,
-          content_summary: [...summaries].join(" / "),
+          ...base,
+          parcel_items: dedupeParcelItems(mergeParcelItems(prev.parcel_items, parcelLine.friend_name, parcelLine.remark)),
         });
       }
     }
