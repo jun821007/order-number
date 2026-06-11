@@ -223,17 +223,44 @@ function mergeParcelItems(existing, friendName, remark) {
   return items;
 }
 
+function buildParcelIndex(data) {
+  const byId = new Map();
+  for (const friend of data.friends || []) {
+    for (const parcel of friend.parcels || []) {
+      byId.set(parcel.id, {
+        friend_name: (friend.name || "").trim(),
+        remark: (parcel.remark || "").trim(),
+        china_tracking: (parcel.tracking_id_china || "").trim(),
+      });
+    }
+  }
+  return byId;
+}
+
+function parcelItemsFromGroup(group, parcelIndex) {
+  const lines = [];
+  for (const id of group?.china_tracking_ids || []) {
+    const parcel = parcelIndex.get(id);
+    if (parcel) lines.push(parcel);
+  }
+  return dedupeParcelItems(lines);
+}
+
 function dedupeParcelItems(items) {
   const seen = new Set();
   const out = [];
   for (const item of items) {
-    const name = (item.friend_name || "").trim();
+    const name = (item.friend_name || "").trim() || "未知";
     const remark = (item.remark || "").trim();
-    if (!remark) continue;
-    const key = `${name}\0${remark}`;
+    const china = (item.china_tracking || "").trim();
+    const key = `${name}\0${remark}\0${china}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ friend_name: name, remark });
+    out.push({
+      friend_name: name,
+      remark,
+      ...(china ? { china_tracking: china } : {}),
+    });
   }
   return out;
 }
@@ -243,6 +270,8 @@ function buildShippedTracks(data, days) {
   for (const group of data.taiwan_parcel_groups || []) {
     groupById.set(group.id, group);
   }
+
+  const parcelIndex = buildParcelIndex(data);
 
   const cutoff = Date.now() - Math.max(1, Number(days) || 7) * 24 * 60 * 60 * 1000;
   const byTracking = new Map();
@@ -269,7 +298,9 @@ function buildShippedTracks(data, days) {
         const parcelLine = {
           friend_name: (friend.name || "").trim(),
           remark: (parcel.remark || "").trim(),
+          china_tracking: (parcel.tracking_id_china || "").trim(),
         };
+        const groupItems = parcelItemsFromGroup(group, parcelIndex);
 
         const prev = byTracking.get(trackingNumber);
         if (!prev) {
@@ -281,7 +312,7 @@ function buildShippedTracks(data, days) {
             shipped_at: shippedAt || null,
             shipping_method: shippingMethod,
             shipping_address: shippingAddress,
-            parcel_items: dedupeParcelItems([parcelLine]),
+            parcel_items: groupItems.length > 0 ? groupItems : dedupeParcelItems([parcelLine]),
           });
           continue;
         }
@@ -293,9 +324,15 @@ function buildShippedTracks(data, days) {
         if (keepNewer && shippingAddress) base.shipping_address = shippingAddress;
         if (!base.shipping_address && shippingAddress) base.shipping_address = shippingAddress;
 
+        const mergedItems = dedupeParcelItems([
+          ...(groupItems.length > 0 ? groupItems : []),
+          ...(prev.parcel_items || []),
+          parcelLine,
+        ]);
+
         byTracking.set(trackingNumber, {
           ...base,
-          parcel_items: dedupeParcelItems(mergeParcelItems(prev.parcel_items, parcelLine.friend_name, parcelLine.remark)),
+          parcel_items: mergedItems,
         });
       }
     }
