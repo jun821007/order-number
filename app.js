@@ -1753,15 +1753,18 @@ function copySelectedChina() {
 
 function copySelectedChinaWithRemark() {
   const text = [];
+  let totalWeight = 0;
   state.data.friends.forEach((friend) => {
     friend.parcels.forEach((parcel) => {
       if (!state.selectedParcelIds.has(parcel.id)) return;
       const weightText = Number(parcel.weight_kg || 0).toFixed(1);
+      totalWeight += Number(parcel.weight_kg || 0);
       const remark = (parcel.remark || "").trim();
       text.push(remark ? `${weightText} ${parcel.tracking_id_china} ${remark}` : `${weightText} ${parcel.tracking_id_china}`);
     });
   });
   if (!text.length) return toast("沒有可複製資料");
+  text.push(`總重量累計: ${totalWeight.toFixed(1)}kg`);
   copyText(text.join("\n"));
 }
 
