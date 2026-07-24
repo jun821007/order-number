@@ -52,6 +52,7 @@ const els = {
   selectAll: document.getElementById("selectAll"),
   selectAllMobile: document.getElementById("selectAllMobile"),
   selectedCountText: document.getElementById("selectedCountText"),
+  selectedCountTopText: document.getElementById("selectedCountTopText"),
   parcelTbody: document.getElementById("parcelTbody"),
   parcelCardList: document.getElementById("parcelCardList"),
   parcelCountText: document.getElementById("parcelCountText"),
@@ -1113,8 +1114,12 @@ function updateParcelStatus(parcelId, nextStatus, message = "") {
 }
 
 function updateSelectedCountUI() {
-  if (!els.selectedCountText) return;
-  els.selectedCountText.textContent = `已選 ${state.selectedParcelIds.size}`;
+  if (els.selectedCountText) {
+    els.selectedCountText.textContent = `已選 ${state.selectedParcelIds.size}`;
+  }
+  if (els.selectedCountTopText) {
+    els.selectedCountTopText.textContent = `已勾選 ${state.selectedParcelIds.size} 筆`;
+  }
 }
 
 function buildParcelRow(parcel, ownerName, className = "") {
