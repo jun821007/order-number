@@ -806,10 +806,35 @@ function addBulkParcels() {
   const batchSeen = new Set();
   const duplicated = [];
   let inserted = 0;
+  let directArrived = 0;
 
   lines.forEach((line) => {
-    const [trackingRaw, ...remarkParts] = line.split(/\s+/);
-    const tracking = (trackingRaw || "").trim();
+    const parts = line.split(/\s+/).filter(Boolean);
+    if (!parts.length) return;
+
+    let tracking = "";
+    let remark = "";
+    let weight = 0;
+    let status = "pending_arrival";
+    let arrivedTime = null;
+
+    // 支援格式：重量 單號 品名（直接入轉運倉）
+    const parsedWeight = Number.parseFloat(parts[0]);
+    const hasWeightPrefix = /^\d+(?:\.\d+)?$/.test(parts[0]) && /^[A-Za-z0-9]+$/.test(parts[1] || "") &&
+      Number.isFinite(parsedWeight) && parsedWeight >= 0 && parsedWeight <= 100 && parts.length >= 2;
+    if (hasWeightPrefix) {
+      tracking = (parts[1] || "").trim();
+      remark = parts.slice(2).join(" ").trim();
+      weight = parsedWeight;
+      status = "arrived_at_warehouse";
+      arrivedTime = nowIso();
+      directArrived += 1;
+    } else {
+      // 原本格式：單號 品名
+      tracking = (parts[0] || "").trim();
+      remark = parts.slice(1).join(" ").trim();
+    }
+
     const key = tracking.toLowerCase();
     if (!tracking) return;
 
@@ -827,13 +852,13 @@ function addBulkParcels() {
     friend.parcels.push({
       id: uid(),
       tracking_id_china: tracking,
-      remark: remarkParts.join(" "),
-      status: "pending_arrival",
+      remark,
+      status,
       shipping_priority: "normal",
-      weight_kg: 0,
+      weight_kg: weight,
       taiwan_parcel_group_id: null,
       created_at: nowIso(),
-      arrived_at_warehouse_time: null,
+      arrived_at_warehouse_time: arrivedTime,
       shipped_to_taiwan_time: null
     });
     trackingOwnerMap.set(key, friend.name || "-");
@@ -850,7 +875,7 @@ function addBulkParcels() {
 
   state.selectedFriendId = friend.id;
   els.bulkInput.value = "";
-  persistAndRender(`已新增 ${inserted} 筆${duplicated.length ? `，略過重複 ${duplicated.length} 筆` : ""}`);
+  persistAndRender(`已新增 ${inserted} 筆（直接入轉運倉 ${directArrived} 筆）${duplicated.length ? `，略過重複 ${duplicated.length} 筆` : ""}`);
 }
 
 function runBulkInbound() {
@@ -1711,7 +1736,7 @@ function markSelectedShipped() {
   const trackingTaiwanRaw = prompt("輸入台灣單號（可留空，之後可在此單修改）：") || "";
   const taiwanTrackingId = normalizeTaiwanTrackingInput(trackingTaiwanRaw);
 
-  const methodRaw = prompt("輸入寄出方式（超商/黑貓/新竹，必填）：", "超商");
+  const methodRaw = prompt("輸入寄出方式（超商/黑貓/新竹，必填）：", "新竹");
   if (methodRaw === null) return toast("已略過操作");
   const shippingMethod = (methodRaw || "").trim();
   if (!["超商", "黑貓", "新竹"].includes(shippingMethod)) return toast("寄出方式僅可填：超商/黑貓/新竹");
