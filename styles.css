@@ -32,6 +32,7 @@ body {
 
 .app-header h1 { margin: 0 0 4px; font-size: 24px; }
 .app-header p { margin: 0; color: #d1d5db; }
+.app-header .btn { flex-shrink: 0; }
 
 .persistence-badge {
   font-size: 12px;
@@ -354,6 +355,53 @@ th, td {
   color: #fff;
   padding: 10px 12px;
   border-radius: 8px;
+}
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.82);
+  display: grid;
+  place-items: center;
+  z-index: 10000;
+  padding: 16px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: #fff;
+  border-radius: 14px;
+  padding: 18px;
+  border: 1px solid #d1d5db;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.auth-card h2 {
+  margin: 0 0 8px;
+}
+
+.auth-hint {
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.auth-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 14px;
+  color: #374151;
+}
+
+.auth-remember input {
+  width: auto;
+}
+
+.auth-error {
+  margin-top: 10px;
+  color: #b91c1c;
+  font-size: 13px;
 }
 
 .friend-menu-btn {

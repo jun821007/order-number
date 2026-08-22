@@ -68,9 +68,16 @@ const els = {
 
   persistenceBadge: document.getElementById("persistenceBadge"),
   friendMenuBtn: document.getElementById("friendMenuBtn"),
+  logoutBtn: document.getElementById("logoutBtn"),
   sidebar: document.getElementById("sidebar"),
   sidebarBackdrop: document.getElementById("sidebarBackdrop"),
-  toast: document.getElementById("toast")
+  toast: document.getElementById("toast"),
+  authOverlay: document.getElementById("authOverlay"),
+  loginUsername: document.getElementById("loginUsername"),
+  loginPassword: document.getElementById("loginPassword"),
+  loginRemember: document.getElementById("loginRemember"),
+  loginBtn: document.getElementById("loginBtn"),
+  authError: document.getElementById("authError")
 };
 
 const state = {
@@ -88,6 +95,7 @@ const state = {
   bulkInboundCopyText: "",
   bulkInboundCopyWeightTrackingRemarkText: "",
   bulkShipCopyText: "",
+  authReady: false,
   sidebarMenuOpen: false,
   shippingEditingIds: new Set(),
   shippingCreateFormKeys: new Set()
@@ -288,6 +296,110 @@ function normalizeDataShape(raw) {
   return { friends, taiwan_parcel_groups: groups };
 }
 
+function buildHttpError(response, fallbackMessage) {
+  const error = new Error(fallbackMessage || `請求失敗(${response.status})`);
+  error.status = response.status;
+  return error;
+}
+
+function setAuthOverlayVisible(visible) {
+  if (!els.authOverlay) return;
+  els.authOverlay.classList.toggle("hidden", !visible);
+}
+
+function setAuthError(message) {
+  if (!els.authError) return;
+  if (!message) {
+    els.authError.textContent = "";
+    els.authError.classList.add("hidden");
+    return;
+  }
+  els.authError.textContent = message;
+  els.authError.classList.remove("hidden");
+}
+
+function setLogoutVisible(visible) {
+  if (!els.logoutBtn) return;
+  els.logoutBtn.classList.toggle("hidden", !visible);
+}
+
+function getAuthEndpoint(path) {
+  return getEndpoint(path);
+}
+
+async function authRequest(path, options = {}) {
+  const url = getAuthEndpoint(path);
+  if (!url) throw new Error("請先設定 backend.baseUrl");
+  const response = await fetch(url, {
+    ...options,
+    credentials: "include",
+    headers: {
+      ...backendConfig.headers,
+      ...(options.headers || {})
+    }
+  });
+  return response;
+}
+
+async function checkSession() {
+  try {
+    const response = await authRequest("/api/auth/session", { method: "GET" });
+    if (!response.ok) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loginWithPassword() {
+  const username = (els.loginUsername?.value || "").trim();
+  const password = String(els.loginPassword?.value || "");
+  const remember = Boolean(els.loginRemember?.checked);
+
+  if (!username || !password) {
+    setAuthError("請輸入帳號與密碼");
+    return false;
+  }
+
+  const response = await authRequest("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password, remember })
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      setAuthError("帳號或密碼錯誤");
+      return false;
+    }
+    if (response.status === 429) {
+      setAuthError("嘗試次數過多，請稍後再試");
+      return false;
+    }
+    if (response.status === 503) {
+      setAuthError("後端尚未設定登入帳密，請先設定環境變數");
+      return false;
+    }
+    throw buildHttpError(response, `登入失敗(${response.status})`);
+  }
+
+  setAuthError("");
+  if (els.loginPassword) els.loginPassword.value = "";
+  return true;
+}
+
+async function logoutSession() {
+  try {
+    await authRequest("/api/auth/logout", { method: "POST" });
+  } catch (error) {
+    console.error(error);
+  }
+  state.authReady = false;
+  setLogoutVisible(false);
+  setAuthOverlayVisible(true);
+  if (els.loginPassword) els.loginPassword.value = "";
+}
+
 async function copyText(text) {
   if (!text) return;
   try {
@@ -301,8 +413,12 @@ async function copyText(text) {
 async function loadFromBackend() {
   const url = getEndpoint(backendConfig.loadPath);
   if (!url) throw new Error("請先設定 backend.baseUrl");
-  const response = await fetch(url, { method: "GET", headers: backendConfig.headers });
-  if (!response.ok) throw new Error(`讀取失敗(${response.status})`);
+  const response = await fetch(url, {
+    method: "GET",
+    headers: backendConfig.headers,
+    credentials: "include"
+  });
+  if (!response.ok) throw buildHttpError(response, `讀取失敗(${response.status})`);
   const json = await response.json();
   return normalizeDataShape(resolvePayloadData(json, backendConfig.responseDataField));
 }
@@ -314,6 +430,7 @@ async function saveToBackend() {
   const payload = buildRequestBody(state.data, backendConfig.requestDataField);
   const response = await fetch(url, {
     method: backendConfig.saveMethod,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...backendConfig.headers
@@ -321,7 +438,7 @@ async function saveToBackend() {
     body: JSON.stringify(payload)
   });
 
-  if (!response.ok) throw new Error(`儲存失敗(${response.status})`);
+  if (!response.ok) throw buildHttpError(response, `儲存失敗(${response.status})`);
 }
 
 function enqueuePersist() {
@@ -329,6 +446,13 @@ function enqueuePersist() {
     await saveToBackend();
   }).catch((error) => {
     console.error(error);
+    if (error?.status === 401) {
+      state.authReady = false;
+      setLogoutVisible(false);
+      setAuthOverlayVisible(true);
+      setAuthError("登入已過期，請重新登入");
+      return;
+    }
     toast("後端儲存失敗，請稍後重試");
   });
 }
@@ -1828,20 +1952,34 @@ function toggleSelectAll(checked) {
   renderParcelRows();
 }
 
-async function init() {
-  updatePersistenceBadge();
-  updateFriendListCollapseUI();
-  updateSidebarMenuUI();
-
+async function loadDataAndRender() {
   try {
     state.data = await loadFromBackend();
   } catch (error) {
     console.error(error);
+    if (error?.status === 401) {
+      state.authReady = false;
+      setLogoutVisible(false);
+      setAuthOverlayVisible(true);
+      setAuthError("登入已過期，請重新登入");
+      return false;
+    }
     state.data = { ...EMPTY_DATA };
     toast("後端資料讀取失敗，請先確認 Railway API 設定");
   }
 
   state.selectedFriendId = state.data.friends[0]?.id || null;
+  render();
+  return true;
+}
+
+async function init() {
+  updatePersistenceBadge();
+  updateFriendListCollapseUI();
+  updateSidebarMenuUI();
+  setLogoutVisible(false);
+  setAuthOverlayVisible(true);
+  setAuthError("");
 
   els.friendListToggleArea.addEventListener("click", () => {
     state.friendListCollapsed = !state.friendListCollapsed;
@@ -1857,6 +1995,45 @@ async function init() {
         updateFriendListCollapseUI();
       }
       updateSidebarMenuUI();
+    });
+  }
+
+  if (els.loginBtn) {
+    els.loginBtn.addEventListener("click", async () => {
+      if (state.authReady) return;
+      const button = els.loginBtn;
+      button.disabled = true;
+      setAuthError("");
+      try {
+        const ok = await loginWithPassword();
+        if (!ok) return;
+        state.authReady = true;
+        setAuthOverlayVisible(false);
+        setLogoutVisible(true);
+        await loadDataAndRender();
+      } catch (error) {
+        console.error(error);
+        setAuthError("登入失敗，請稍後再試");
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+
+  if (els.loginPassword) {
+    els.loginPassword.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && els.loginBtn) {
+        e.preventDefault();
+        els.loginBtn.click();
+      }
+    });
+  }
+
+  if (els.logoutBtn) {
+    els.logoutBtn.addEventListener("click", async () => {
+      await logoutSession();
+      setAuthError("");
+      if (els.loginUsername) els.loginUsername.focus();
     });
   }
 
@@ -1931,8 +2108,18 @@ async function init() {
     els.shippedTaiwanSearch.addEventListener("input", renderShippedSummary);
   }
 
-
-  render();
+  const hasSession = await checkSession();
+  if (hasSession) {
+    state.authReady = true;
+    setAuthOverlayVisible(false);
+    setLogoutVisible(true);
+    await loadDataAndRender();
+  } else {
+    state.authReady = false;
+    setAuthOverlayVisible(true);
+    setLogoutVisible(false);
+    if (els.loginUsername) els.loginUsername.focus();
+  }
 }
 
 init();

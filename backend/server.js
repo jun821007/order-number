@@ -2,10 +2,23 @@
 const cors = require("cors");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const crypto = require("node:crypto");
+const cookieParser = require("cookie-parser");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const bcrypt = require("bcryptjs");
 
 const app = express();
 const PORT = process.env.PORT || 3100;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const AUTH_USERNAME = (process.env.AUTH_USERNAME || "").trim();
+const AUTH_PASSWORD_HASH = (process.env.AUTH_PASSWORD_HASH || "").trim();
+const AUTH_PASSWORD = (process.env.AUTH_PASSWORD || "").trim();
+const AUTH_SESSION_SECRET = (process.env.AUTH_SESSION_SECRET || "").trim();
+const AUTH_COOKIE_NAME = (process.env.AUTH_COOKIE_NAME || "order_tool_session").trim();
+const SESSION_REMEMBER_DAYS = Math.max(1, Number(process.env.AUTH_REMEMBER_DAYS || 30));
+const SESSION_DEFAULT_HOURS = Math.max(1, Number(process.env.AUTH_SESSION_HOURS || 12));
+const isProduction = process.env.NODE_ENV === "production";
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "storage");
 const CONFIGURED_DATA_FILE_PATH = process.env.DATA_FILE_PATH || path.join(DATA_DIR, "data.json");
@@ -14,8 +27,147 @@ let activeDataFilePath = CONFIGURED_DATA_FILE_PATH;
 
 const emptyData = { friends: [], taiwan_parcel_groups: [] };
 
-app.use(cors({ origin: CORS_ORIGIN }));
+const allowedOrigins = CORS_ORIGIN
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+function isOriginAllowed(origin) {
+  if (!origin) return true;
+  if (!allowedOrigins.length) return false;
+  if (allowedOrigins.includes("*")) return true;
+  return allowedOrigins.includes(origin);
+}
+
+const corsConfig = {
+  origin(origin, callback) {
+    if (isOriginAllowed(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true
+};
+
+app.use(helmet());
+app.use(cors(corsConfig));
+app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: "TOO_MANY_ATTEMPTS" }
+});
+
+function hasConfiguredAuth() {
+  return Boolean(AUTH_USERNAME && AUTH_SESSION_SECRET && (AUTH_PASSWORD_HASH || AUTH_PASSWORD));
+}
+
+function safeEqualString(a, b) {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+async function verifyPassword(rawPassword) {
+  const value = String(rawPassword || "");
+  if (AUTH_PASSWORD_HASH) {
+    return bcrypt.compare(value, AUTH_PASSWORD_HASH);
+  }
+  return safeEqualString(value, AUTH_PASSWORD);
+}
+
+function base64UrlEncode(input) {
+  return Buffer.from(input).toString("base64url");
+}
+
+function decodeBase64UrlJson(encoded) {
+  try {
+    const text = Buffer.from(encoded, "base64url").toString("utf8");
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function signToken(unsignedPayload) {
+  return crypto.createHmac("sha256", AUTH_SESSION_SECRET).update(unsignedPayload).digest("base64url");
+}
+
+function createSessionToken({ remember }) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expiresInSec = remember ? SESSION_REMEMBER_DAYS * 24 * 60 * 60 : SESSION_DEFAULT_HOURS * 60 * 60;
+  const payload = {
+    sub: AUTH_USERNAME,
+    iat: nowSec,
+    exp: nowSec + expiresInSec,
+    remember: Boolean(remember),
+    jti: crypto.randomBytes(12).toString("hex")
+  };
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const signature = signToken(encodedPayload);
+  return {
+    token: `${encodedPayload}.${signature}`,
+    payload
+  };
+}
+
+function verifySessionToken(token) {
+  const text = String(token || "");
+  if (!text.includes(".")) return null;
+  const [encodedPayload, signature] = text.split(".");
+  if (!encodedPayload || !signature) return null;
+  if (!AUTH_SESSION_SECRET) return null;
+  const expected = signToken(encodedPayload);
+  if (!safeEqualString(signature, expected)) return null;
+  const payload = decodeBase64UrlJson(encodedPayload);
+  if (!payload || payload.sub !== AUTH_USERNAME) return null;
+  if (!Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
+
+function getSessionTokenFromRequest(req) {
+  const cookieToken = req.cookies?.[AUTH_COOKIE_NAME];
+  if (cookieToken) return cookieToken;
+  const authHeader = String(req.headers.authorization || "").trim();
+  if (authHeader.startsWith("Bearer ")) return authHeader.slice("Bearer ".length).trim();
+  return "";
+}
+
+function writeSessionCookie(res, token, remember) {
+  const options = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: "strict",
+    path: "/"
+  };
+  if (remember) {
+    options.maxAge = SESSION_REMEMBER_DAYS * 24 * 60 * 60 * 1000;
+  }
+  res.cookie(AUTH_COOKIE_NAME, token, options);
+}
+
+function clearSessionCookie(res) {
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: "strict",
+    path: "/"
+  });
+}
+
+function requireAppAuth(req, res, next) {
+  if (!hasConfiguredAuth()) {
+    return res.status(503).json({ ok: false, error: "AUTH_NOT_CONFIGURED" });
+  }
+  const token = getSessionTokenFromRequest(req);
+  const payload = verifySessionToken(token);
+  if (!payload) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  req.auth = payload;
+  return next();
+}
 
 function normalizeShippingEntry(entry) {
   return {
@@ -116,7 +268,55 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "order-tool-backend", data_path: activeDataFilePath });
 });
 
-app.get("/api/order-tool/data", async (_req, res) => {
+app.get("/api/auth/session", (req, res) => {
+  if (!hasConfiguredAuth()) {
+    return res.status(503).json({ ok: false, error: "AUTH_NOT_CONFIGURED" });
+  }
+  const payload = verifySessionToken(getSessionTokenFromRequest(req));
+  if (!payload) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  return res.json({ ok: true, username: payload.sub, expires_at: new Date(payload.exp * 1000).toISOString() });
+});
+
+app.post("/api/auth/login", authLimiter, async (req, res) => {
+  try {
+    if (!hasConfiguredAuth()) {
+      return res.status(503).json({ ok: false, error: "AUTH_NOT_CONFIGURED" });
+    }
+    const username = String(req.body?.username || "").trim();
+    const password = String(req.body?.password || "");
+    const remember = Boolean(req.body?.remember);
+
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, error: "MISSING_CREDENTIALS" });
+    }
+    if (!safeEqualString(username, AUTH_USERNAME)) {
+      return res.status(401).json({ ok: false, error: "INVALID_CREDENTIALS" });
+    }
+    const passOk = await verifyPassword(password);
+    if (!passOk) {
+      return res.status(401).json({ ok: false, error: "INVALID_CREDENTIALS" });
+    }
+
+    const session = createSessionToken({ remember });
+    writeSessionCookie(res, session.token, remember);
+    return res.json({
+      ok: true,
+      username: AUTH_USERNAME,
+      remember: Boolean(remember),
+      expires_at: new Date(session.payload.exp * 1000).toISOString()
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "LOGIN_FAILED" });
+  }
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  clearSessionCookie(res);
+  return res.json({ ok: true });
+});
+
+app.get("/api/order-tool/data", requireAppAuth, async (_req, res) => {
   try {
     const data = await readDataFile();
     return res.json(data);
@@ -126,7 +326,7 @@ app.get("/api/order-tool/data", async (_req, res) => {
   }
 });
 
-app.put("/api/order-tool/data", async (req, res) => {
+app.put("/api/order-tool/data", requireAppAuth, async (req, res) => {
   try {
     const payload = req.body?.data ?? req.body;
     if (!payload || typeof payload !== "object") {
@@ -141,7 +341,7 @@ app.put("/api/order-tool/data", async (req, res) => {
   }
 });
 
-app.post("/api/order-tool/data", async (req, res) => {
+app.post("/api/order-tool/data", requireAppAuth, async (req, res) => {
   try {
     const payload = req.body?.data ?? req.body;
     if (!payload || typeof payload !== "object") {
@@ -156,7 +356,7 @@ app.post("/api/order-tool/data", async (req, res) => {
   }
 });
 
-app.patch("/api/order-tool/data", async (req, res) => {
+app.patch("/api/order-tool/data", requireAppAuth, async (req, res) => {
   try {
     const payload = req.body?.data ?? req.body;
     if (!payload || typeof payload !== "object") {
@@ -403,6 +603,11 @@ app.listen(PORT, "0.0.0.0", () => {
       console.log(`Order tool backend running on :${PORT}`);
       console.log("Listening host: 0.0.0.0");
       console.log(`Data file path: ${activeDataFilePath}`);
+      if (!hasConfiguredAuth()) {
+        console.warn("Auth is not fully configured. Set AUTH_USERNAME, AUTH_SESSION_SECRET, and AUTH_PASSWORD_HASH.");
+      } else if (!AUTH_PASSWORD_HASH) {
+        console.warn("Using AUTH_PASSWORD fallback. Prefer AUTH_PASSWORD_HASH for stronger security.");
+      }
     })
     .catch((error) => {
       console.error("Data file initialization failed:", error);

@@ -40,9 +40,24 @@ python -m http.server 5500
 4. 在 Railway 設定環境變數（Variables）：
    - `CORS_ORIGIN=https://你的-netlify-網域.netlify.app`
    - `DATA_DIR=/data`
+   - `AUTH_USERNAME=你的登入帳號`
+   - `AUTH_PASSWORD_HASH=你的 bcrypt 密碼雜湊`
+   - `AUTH_SESSION_SECRET=長隨機字串（至少 32 字元）`
+   - （可選）`AUTH_REMEMBER_DAYS=30`
 5. 在 Railway 加一個 Volume，掛載路徑設 `/data`
 6. 部署完成後記下後端網址，例如：
    - `https://order-tool-backend.up.railway.app`
+
+### 產生密碼雜湊（bcrypt）
+
+在 `backend` 目錄執行：
+
+```powershell
+cd "C:\Users\rsz97\Order number\backend"
+node -e "const b=require('bcryptjs'); console.log(b.hashSync('你的密碼', 12));"
+```
+
+把輸出的字串貼到 Railway 的 `AUTH_PASSWORD_HASH`。
 
 ### API 健康檢查
 
@@ -75,4 +90,5 @@ git push -u origin main
 
 - Railway 若不掛 Volume，`data.json` 可能在重啟/重佈署後遺失
 - 前端若顯示讀取失敗，多半是 `app-config.js` 的 `baseUrl` 或 `CORS_ORIGIN` 未設定好
+- 登入模式啟用後，若帳密錯誤太多次，後端會暫時限制登入請求
 - 目前 API 回傳為純資料物件，不需要 `data` 外層包裝
