@@ -16,9 +16,11 @@ const AUTH_PASSWORD_HASH = (process.env.AUTH_PASSWORD_HASH || "").trim();
 const AUTH_PASSWORD = (process.env.AUTH_PASSWORD || "").trim();
 const AUTH_SESSION_SECRET = (process.env.AUTH_SESSION_SECRET || "").trim();
 const AUTH_COOKIE_NAME = (process.env.AUTH_COOKIE_NAME || "order_tool_session").trim();
-const SESSION_REMEMBER_DAYS = Math.max(1, Number(process.env.AUTH_REMEMBER_DAYS || 30));
+// "永久記住" 使用超長天數；可用 AUTH_REMEMBER_DAYS 覆蓋
+const SESSION_REMEMBER_DAYS = Math.max(1, Number(process.env.AUTH_REMEMBER_DAYS || 36500));
 const SESSION_DEFAULT_HOURS = Math.max(1, Number(process.env.AUTH_SESSION_HOURS || 12));
 const isProduction = process.env.NODE_ENV === "production";
+const AUTH_COOKIE_SAMESITE = (process.env.AUTH_COOKIE_SAMESITE || (isProduction ? "none" : "lax")).trim().toLowerCase();
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "storage");
 const CONFIGURED_DATA_FILE_PATH = process.env.DATA_FILE_PATH || path.join(DATA_DIR, "data.json");
@@ -137,10 +139,12 @@ function getSessionTokenFromRequest(req) {
 }
 
 function writeSessionCookie(res, token, remember) {
+  const sameSite = ["lax", "strict", "none"].includes(AUTH_COOKIE_SAMESITE) ? AUTH_COOKIE_SAMESITE : "lax";
   const options = {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
+    // SameSite=None 需要 Secure=true，供 Netlify(前端) + Railway(後端) 跨網域登入使用
+    secure: isProduction || sameSite === "none",
+    sameSite,
     path: "/"
   };
   if (remember) {
@@ -150,10 +154,11 @@ function writeSessionCookie(res, token, remember) {
 }
 
 function clearSessionCookie(res) {
+  const sameSite = ["lax", "strict", "none"].includes(AUTH_COOKIE_SAMESITE) ? AUTH_COOKIE_SAMESITE : "lax";
   res.clearCookie(AUTH_COOKIE_NAME, {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
+    secure: isProduction || sameSite === "none",
+    sameSite,
     path: "/"
   });
 }

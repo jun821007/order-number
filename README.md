@@ -43,7 +43,8 @@ python -m http.server 5500
    - `AUTH_USERNAME=你的登入帳號`
    - `AUTH_PASSWORD_HASH=你的 bcrypt 密碼雜湊`
    - `AUTH_SESSION_SECRET=長隨機字串（至少 32 字元）`
-   - （可選）`AUTH_REMEMBER_DAYS=30`
+   - （可選）`AUTH_REMEMBER_DAYS=36500`（預設已為永久長效）
+   - （可選）`AUTH_COOKIE_SAMESITE=none`（前後端不同網域時必用）
 5. 在 Railway 加一個 Volume，掛載路徑設 `/data`
 6. 部署完成後記下後端網址，例如：
    - `https://order-tool-backend.up.railway.app`
