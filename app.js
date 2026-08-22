@@ -10,6 +10,7 @@ const backendConfig = {
   requestDataField: rawConfig.backend?.requestDataField || "",
   headers: rawConfig.backend?.headers || {}
 };
+const AUTH_TOKEN_STORAGE_KEY = "order_tool_auth_token";
 
 const els = {
   globalTrackingSearch: document.getElementById("globalTrackingSearch"),
@@ -323,6 +324,44 @@ function setLogoutVisible(visible) {
   els.logoutBtn.classList.toggle("hidden", !visible);
 }
 
+function getStoredAuthToken() {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function setStoredAuthToken(token, remember) {
+  try {
+    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    if (!token) return;
+    if (remember) localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+    else sessionStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+  } catch {
+    // ignore storage access issues
+  }
+}
+
+function clearStoredAuthToken() {
+  try {
+    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  } catch {
+    // ignore storage access issues
+  }
+}
+
+function withAuthHeader(baseHeaders = {}) {
+  const token = getStoredAuthToken();
+  if (!token) return { ...baseHeaders };
+  return {
+    ...baseHeaders,
+    Authorization: `Bearer ${token}`
+  };
+}
+
 function getAuthEndpoint(path) {
   return getEndpoint(path);
 }
@@ -330,13 +369,14 @@ function getAuthEndpoint(path) {
 async function authRequest(path, options = {}) {
   const url = getAuthEndpoint(path);
   if (!url) throw new Error("請先設定 backend.baseUrl");
+  const mergedHeaders = withAuthHeader({
+    ...backendConfig.headers,
+    ...(options.headers || {})
+  });
   const response = await fetch(url, {
     ...options,
     credentials: "include",
-    headers: {
-      ...backendConfig.headers,
-      ...(options.headers || {})
-    }
+    headers: mergedHeaders
   });
   return response;
 }
@@ -366,6 +406,12 @@ async function loginWithPassword() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password, remember })
   });
+  let loginPayload = null;
+  try {
+    loginPayload = await response.json();
+  } catch {
+    loginPayload = null;
+  }
 
   if (!response.ok) {
     if (response.status === 401) {
@@ -383,6 +429,10 @@ async function loginWithPassword() {
     throw buildHttpError(response, `登入失敗(${response.status})`);
   }
 
+  if (loginPayload?.session_token) {
+    setStoredAuthToken(loginPayload.session_token, remember);
+  }
+
   setAuthError("");
   if (els.loginPassword) els.loginPassword.value = "";
   return true;
@@ -394,6 +444,7 @@ async function logoutSession() {
   } catch (error) {
     console.error(error);
   }
+  clearStoredAuthToken();
   state.authReady = false;
   setLogoutVisible(false);
   setAuthOverlayVisible(true);
@@ -415,7 +466,7 @@ async function loadFromBackend() {
   if (!url) throw new Error("請先設定 backend.baseUrl");
   const response = await fetch(url, {
     method: "GET",
-    headers: backendConfig.headers,
+    headers: withAuthHeader(backendConfig.headers),
     credentials: "include"
   });
   if (!response.ok) throw buildHttpError(response, `讀取失敗(${response.status})`);
@@ -433,7 +484,7 @@ async function saveToBackend() {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...backendConfig.headers
+      ...withAuthHeader(backendConfig.headers)
     },
     body: JSON.stringify(payload)
   });
@@ -447,6 +498,7 @@ function enqueuePersist() {
   }).catch((error) => {
     console.error(error);
     if (error?.status === 401) {
+      clearStoredAuthToken();
       state.authReady = false;
       setLogoutVisible(false);
       setAuthOverlayVisible(true);
@@ -1958,6 +2010,7 @@ async function loadDataAndRender() {
   } catch (error) {
     console.error(error);
     if (error?.status === 401) {
+      clearStoredAuthToken();
       state.authReady = false;
       setLogoutVisible(false);
       setAuthOverlayVisible(true);

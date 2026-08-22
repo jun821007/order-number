@@ -92,4 +92,5 @@ git push -u origin main
 - Railway 若不掛 Volume，`data.json` 可能在重啟/重佈署後遺失
 - 前端若顯示讀取失敗，多半是 `app-config.js` 的 `baseUrl` 或 `CORS_ORIGIN` 未設定好
 - 登入模式啟用後，若帳密錯誤太多次，後端會暫時限制登入請求
+- 若手機瀏覽器阻擋第三方 Cookie，前端會自動改用 Bearer Token 備援維持登入
 - 目前 API 回傳為純資料物件，不需要 `data` 外層包裝

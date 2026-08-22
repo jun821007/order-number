@@ -308,7 +308,9 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
       ok: true,
       username: AUTH_USERNAME,
       remember: Boolean(remember),
-      expires_at: new Date(session.payload.exp * 1000).toISOString()
+      expires_at: new Date(session.payload.exp * 1000).toISOString(),
+      token_type: "Bearer",
+      session_token: session.token
     });
   } catch (error) {
     console.error(error);
