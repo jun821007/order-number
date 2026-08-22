@@ -254,7 +254,7 @@ th, td {
   font-size: 12px;
 }
 
-.hidden { display: none; }
+.hidden { display: none !important; }
 
 .empty-state {
   border: 2px dashed #cbd5e1;
