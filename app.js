@@ -1748,7 +1748,10 @@ function renderShippedSummary() {
 
     const amountInfo = document.createElement("div");
     amountInfo.className = "shipped-amount-info";
-    amountInfo.textContent = `寄出方式：${group.shippingMethod || "未填"} | 地址：${group.shippingAddress || "-"} | 總金額人民幣：${group.settlementCny ?? "-"} | 總金額台幣：${group.settlementTwd ?? "-"}`;
+    const groupFxRate = (Number.isFinite(group.settlementCny) && group.settlementCny > 0 && Number.isFinite(group.settlementTwd))
+      ? (group.settlementTwd / group.settlementCny).toFixed(4)
+      : "-";
+    amountInfo.textContent = `寄出方式：${group.shippingMethod || "未填"} | 地址：${group.shippingAddress || "-"} | 總金額人民幣：${group.settlementCny ?? "-"} | 總金額台幣：${group.settlementTwd ?? "-"} | 匯率：${groupFxRate}`;
 
     const ownerSelect = document.createElement("select");
     ownerNames.forEach((name) => {
@@ -1808,11 +1811,15 @@ function renderShippedSummary() {
       const twdUnit = group.settlementTwd / groupWeight;
       const ownerCny = cnyUnit * ownerWeight;
       const ownerTwd = twdUnit * ownerWeight;
+      const fxRate = group.settlementCny > 0 ? (group.settlementTwd / group.settlementCny) : null;
 
       const lines = [`台灣單號 ${group.displayTaiwanId}`, ...ownerItems.map((item) => formatItemLine(item))];
       lines.push(`總重${formatWeightText(ownerWeight)}kg`);
       lines.push(`寄出方式: ${group.shippingMethod || "未填"}`);
       lines.push(`地址: ${group.shippingAddress || "-"}`);
+      if (Number.isFinite(fxRate)) {
+        lines.push(`匯率(台幣/人民幣): *${fxRate.toFixed(4)}*`);
+      }
       lines.push(`人民幣${group.settlementCny}/總重${formatWeightText(groupWeight)} = *${cnyUnit.toFixed(2)}*`);
       lines.push(`${cnyUnit.toFixed(2)}*${formatWeightText(ownerWeight)} = *${ownerCny.toFixed(2)}*`);
       lines.push(`台幣${group.settlementTwd}/總重${formatWeightText(groupWeight)} = *${twdUnit.toFixed(2)}*`);
