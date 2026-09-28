@@ -10,6 +10,7 @@ backend/node_modules/
 backend/.env
 backend/.env.*
 backend/storage/*.tmp
+backend/storage/backups/
 
 # Logs
 *.log

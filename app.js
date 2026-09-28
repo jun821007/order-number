@@ -87,6 +87,11 @@ const state = {
   bulkTargetFriendId: "",
   selectedParcelIds: new Set(),
   saveQueue: Promise.resolve(),
+  syncBase: null,
+  serverVersion: null,
+  saving: false,
+  syncing: false,
+  pendingSyncRender: false,
   shippedCollapsed: true,
   friendListCollapsed: true,
   addParcelCollapsed: true,
@@ -470,26 +475,154 @@ async function loadFromBackend() {
     credentials: "include"
   });
   if (!response.ok) throw buildHttpError(response, `讀取失敗(${response.status})`);
-  const json = await response.json();
-  return normalizeDataShape(resolvePayloadData(json, backendConfig.responseDataField));
+  const json = resolvePayloadData(await response.json(), backendConfig.responseDataField);
+  return { data: normalizeDataShape(json), version: Number(json?.version) || 0 };
+}
+
+function cloneData(data) {
+  return JSON.parse(JSON.stringify(data));
+}
+
+function sameValue(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function mergeFields(base, local, server, skipKeys = []) {
+  const out = { ...server };
+  const keys = new Set([...Object.keys(base || {}), ...Object.keys(local || {}), ...Object.keys(server || {})]);
+  keys.forEach((key) => {
+    if (skipKeys.includes(key)) return;
+    if (sameValue(local?.[key], base?.[key])) return;
+    if (local && key in local) out[key] = local[key];
+    else delete out[key];
+  });
+  return out;
+}
+
+function mergeById(baseList, localList, serverList, mergeItem) {
+  const baseMap = new Map((baseList || []).map((item) => [item.id, item]));
+  const localMap = new Map((localList || []).map((item) => [item.id, item]));
+  const seen = new Set();
+  const result = [];
+
+  (serverList || []).forEach((serverItem) => {
+    seen.add(serverItem.id);
+    const baseItem = baseMap.get(serverItem.id);
+    const localItem = localMap.get(serverItem.id);
+    if (!localItem) {
+      if (!baseItem) result.push(serverItem);
+      return;
+    }
+    result.push(baseItem ? mergeItem(baseItem, localItem, serverItem) : localItem);
+  });
+
+  (localList || []).forEach((localItem) => {
+    if (seen.has(localItem.id)) return;
+    const baseItem = baseMap.get(localItem.id);
+    if (baseItem && sameValue(baseItem, localItem)) return;
+    result.push(localItem);
+  });
+
+  return result;
+}
+
+function mergeIdArray(base = [], local = [], server = []) {
+  const removed = new Set(base.filter((id) => !local.includes(id)));
+  const added = local.filter((id) => !base.includes(id));
+  const out = server.filter((id) => !removed.has(id));
+  added.forEach((id) => {
+    if (!out.includes(id)) out.push(id);
+  });
+  return out;
+}
+
+// Three-way merge: keep this device's changes since the last sync on top of the server's latest data.
+function mergeData(base, local, server) {
+  return {
+    friends: mergeById(base.friends, local.friends, server.friends, (b, l, s) => ({
+      ...mergeFields(b, l, s, ["parcels"]),
+      parcels: mergeById(b.parcels, l.parcels, s.parcels, (pb, pl, ps) => mergeFields(pb, pl, ps))
+    })),
+    taiwan_parcel_groups: mergeById(base.taiwan_parcel_groups, local.taiwan_parcel_groups, server.taiwan_parcel_groups, (b, l, s) => ({
+      ...mergeFields(b, l, s, ["china_tracking_ids"]),
+      china_tracking_ids: mergeIdArray(b.china_tracking_ids, l.china_tracking_ids, s.china_tracking_ids)
+    }))
+  };
+}
+
+function applyServerSnapshot(serverRaw) {
+  const server = normalizeDataShape(serverRaw);
+  const base = state.syncBase || server;
+  state.data = mergeData(base, state.data, server);
+  state.syncBase = cloneData(server);
+  state.serverVersion = Number(serverRaw?.version) || 0;
+  cleanupTaiwanGroups();
+  recalcGroupWeights();
+  if (state.selectedFriendId && !state.data.friends.some((f) => f.id === state.selectedFriendId)) {
+    state.selectedFriendId = state.data.friends[0]?.id || null;
+  }
+}
+
+function isUserEditing() {
+  if (state.shippingEditingIds.size || state.shippingCreateFormKeys.size) return true;
+  const el = document.activeElement;
+  if (!el || !["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) return false;
+  return Boolean(el.closest("#friendList, #parcelTbody, #parcelCardList, #shippedSummaryList"));
+}
+
+function renderAfterSync() {
+  if (isUserEditing()) {
+    state.pendingSyncRender = true;
+    return;
+  }
+  state.pendingSyncRender = false;
+  render();
 }
 
 async function saveToBackend() {
   const url = getEndpoint(backendConfig.savePath);
   if (!url) throw new Error("請先設定 backend.baseUrl");
+  if (state.serverVersion === null) throw new Error("尚未成功讀取後端資料，暫停儲存以免覆蓋");
 
-  const payload = buildRequestBody(state.data, backendConfig.requestDataField);
-  const response = await fetch(url, {
-    method: backendConfig.saveMethod,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...withAuthHeader(backendConfig.headers)
-    },
-    body: JSON.stringify(payload)
-  });
+  state.saving = true;
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const snapshot = cloneData(state.data);
+      const response = await fetch(url, {
+        method: backendConfig.saveMethod,
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...withAuthHeader(backendConfig.headers)
+        },
+        body: JSON.stringify({ data: snapshot, base_version: state.serverVersion })
+      });
 
-  if (!response.ok) throw buildHttpError(response, `儲存失敗(${response.status})`);
+      if (response.status === 409) {
+        const json = await response.json();
+        applyServerSnapshot(json.data);
+        renderAfterSync();
+        continue;
+      }
+      if (!response.ok) throw buildHttpError(response, `儲存失敗(${response.status})`);
+
+      const saved = await response.json();
+      state.syncBase = snapshot;
+      state.serverVersion = Number.isInteger(saved?.version) ? saved.version : state.serverVersion;
+      return;
+    }
+    throw new Error("同步衝突重試失敗");
+  } finally {
+    state.saving = false;
+  }
+}
+
+function handleUnauthorized() {
+  clearStoredAuthToken();
+  state.authReady = false;
+  setLogoutVisible(false);
+  setAuthOverlayVisible(true);
+  setAuthError("登入已過期，請重新登入");
 }
 
 function enqueuePersist() {
@@ -498,15 +631,38 @@ function enqueuePersist() {
   }).catch((error) => {
     console.error(error);
     if (error?.status === 401) {
-      clearStoredAuthToken();
-      state.authReady = false;
-      setLogoutVisible(false);
-      setAuthOverlayVisible(true);
-      setAuthError("登入已過期，請重新登入");
+      handleUnauthorized();
       return;
     }
     toast("後端儲存失敗，請稍後重試");
   });
+}
+
+async function refreshFromServer() {
+  if (!state.authReady || state.syncing || state.saving || document.hidden) return;
+  if (state.serverVersion === null) return;
+  state.syncing = true;
+  try {
+    await state.saveQueue;
+    const startVersion = state.serverVersion;
+    const { data, version } = await loadFromBackend();
+    if (state.saving || state.serverVersion !== startVersion) return;
+
+    if (version === state.serverVersion) {
+      if (state.pendingSyncRender) renderAfterSync();
+      return;
+    }
+
+    const hadLocalChanges = !sameValue(state.data, state.syncBase);
+    applyServerSnapshot({ ...data, version });
+    if (hadLocalChanges) enqueuePersist();
+    renderAfterSync();
+  } catch (error) {
+    console.error(error);
+    if (error?.status === 401) handleUnauthorized();
+  } finally {
+    state.syncing = false;
+  }
 }
 
 function getFriend() {
@@ -2013,18 +2169,19 @@ function toggleSelectAll(checked) {
 
 async function loadDataAndRender() {
   try {
-    state.data = await loadFromBackend();
+    const { data, version } = await loadFromBackend();
+    state.data = data;
+    state.syncBase = cloneData(data);
+    state.serverVersion = version;
   } catch (error) {
     console.error(error);
     if (error?.status === 401) {
-      clearStoredAuthToken();
-      state.authReady = false;
-      setLogoutVisible(false);
-      setAuthOverlayVisible(true);
-      setAuthError("登入已過期，請重新登入");
+      handleUnauthorized();
       return false;
     }
     state.data = { ...EMPTY_DATA };
+    state.syncBase = null;
+    state.serverVersion = null;
     toast("後端資料讀取失敗，請先確認 Railway API 設定");
   }
 
@@ -2167,6 +2324,12 @@ async function init() {
   if (els.shippedTaiwanSearch) {
     els.shippedTaiwanSearch.addEventListener("input", renderShippedSummary);
   }
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshFromServer();
+  });
+  window.addEventListener("focus", refreshFromServer);
+  setInterval(refreshFromServer, 15000);
 
   const hasSession = await checkSession();
   if (hasSession) {

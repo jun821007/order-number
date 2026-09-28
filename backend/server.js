@@ -220,7 +220,8 @@ function normalizeDataShape(raw) {
     shipping_method: (group?.shipping_method || "").trim(),
     shipping_address: (group?.shipping_address || "").trim()
   }));
-  return { friends, taiwan_parcel_groups: groups };
+  const version = Number.isInteger(raw?.version) && raw.version >= 0 ? raw.version : 0;
+  return { friends, taiwan_parcel_groups: groups, version };
 }
 
 async function ensureDataFileAt(filePath) {
@@ -263,6 +264,63 @@ async function writeDataFile(data) {
   await fs.rename(tempPath, activeDataFilePath);
 
   return normalized;
+}
+
+const BACKUP_KEEP = Math.max(1, Number(process.env.BACKUP_KEEP || 200));
+
+async function backupCurrentDataFile() {
+  try {
+    const raw = await fs.readFile(activeDataFilePath, "utf8");
+    const dir = path.join(path.dirname(activeDataFilePath), "backups");
+    await fs.mkdir(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    await fs.writeFile(path.join(dir, `data-${stamp}.json`), raw, "utf8");
+
+    const files = (await fs.readdir(dir))
+      .filter((name) => name.startsWith("data-") && name.endsWith(".json"))
+      .sort();
+    const stale = files.slice(0, Math.max(0, files.length - BACKUP_KEEP));
+    await Promise.all(stale.map((name) => fs.unlink(path.join(dir, name)).catch(() => {})));
+  } catch (error) {
+    console.error("Backup failed:", error);
+  }
+}
+
+let writeChain = Promise.resolve();
+
+function withWriteLock(task) {
+  const run = writeChain.then(task, task);
+  writeChain = run.catch(() => {});
+  return run;
+}
+
+async function handleDataWrite(req, res) {
+  const body = req.body;
+  const payload = body?.data ?? body;
+  if (!payload || typeof payload !== "object") {
+    return res.status(400).json({ error: "INVALID_PAYLOAD" });
+  }
+  const baseVersion = body?.data ? body.base_version : undefined;
+
+  try {
+    const result = await withWriteLock(async () => {
+      const current = await readDataFile();
+      if (baseVersion !== undefined && baseVersion !== null && Number(baseVersion) !== current.version) {
+        return { conflict: true, current };
+      }
+      await backupCurrentDataFile();
+      const saved = await writeDataFile({ ...payload, version: current.version + 1 });
+      return { conflict: false, saved };
+    });
+
+    if (result.conflict) {
+      return res.status(409).json({ ok: false, error: "VERSION_CONFLICT", data: result.current });
+    }
+    return res.json(result.saved);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "WRITE_FAILED" });
+  }
 }
 
 app.get("/", (_req, res) => {
@@ -333,50 +391,9 @@ app.get("/api/order-tool/data", requireAppAuth, async (_req, res) => {
   }
 });
 
-app.put("/api/order-tool/data", requireAppAuth, async (req, res) => {
-  try {
-    const payload = req.body?.data ?? req.body;
-    if (!payload || typeof payload !== "object") {
-      return res.status(400).json({ error: "INVALID_PAYLOAD" });
-    }
-
-    const saved = await writeDataFile(payload);
-    return res.json(saved);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "WRITE_FAILED" });
-  }
-});
-
-app.post("/api/order-tool/data", requireAppAuth, async (req, res) => {
-  try {
-    const payload = req.body?.data ?? req.body;
-    if (!payload || typeof payload !== "object") {
-      return res.status(400).json({ error: "INVALID_PAYLOAD" });
-    }
-
-    const saved = await writeDataFile(payload);
-    return res.json(saved);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "WRITE_FAILED" });
-  }
-});
-
-app.patch("/api/order-tool/data", requireAppAuth, async (req, res) => {
-  try {
-    const payload = req.body?.data ?? req.body;
-    if (!payload || typeof payload !== "object") {
-      return res.status(400).json({ error: "INVALID_PAYLOAD" });
-    }
-
-    const saved = await writeDataFile(payload);
-    return res.json(saved);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "WRITE_FAILED" });
-  }
-});
+app.put("/api/order-tool/data", requireAppAuth, handleDataWrite);
+app.post("/api/order-tool/data", requireAppAuth, handleDataWrite);
+app.patch("/api/order-tool/data", requireAppAuth, handleDataWrite);
 
 
 const HORUS_READ_SECRET = (process.env.HORUS_READ_SECRET || "").trim();
