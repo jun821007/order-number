@@ -2057,6 +2057,7 @@ function markSelectedArrived() {
     }
   });
 
+  state.selectedParcelIds.clear();
   persistAndRender("\u5df2\u66f4\u65b0\u70ba\u5df2\u5230\u96c6\u904b\u5009");
 }
 
@@ -2069,11 +2070,30 @@ function markSelectedShipped() {
   });
   if (!selected.length) return toast("請先勾選單號");
 
-  const hasPending = selected.some((parcel) => parcel.status === "pending_arrival");
+  let targets = selected;
+  const alreadyShipped = selected.filter((parcel) => parcel.status === "shipped_to_taiwan");
+  if (alreadyShipped.length) {
+    const moveToo = confirm(
+      `選取中有 ${alreadyShipped.length} 筆已經是「已出轉運」（屬於其他台灣單號）。\n\n` +
+      `按「確定」：一起移到這次的新單\n按「取消」：只處理未出轉運的 ${selected.length - alreadyShipped.length} 筆`
+    );
+    if (!moveToo) targets = selected.filter((parcel) => parcel.status !== "shipped_to_taiwan");
+  }
+  if (!targets.length) return toast("沒有需要標記的單號");
+
+  const hasPending = targets.some((parcel) => parcel.status === "pending_arrival");
   if (hasPending && !confirm("選取中包含『未到集運倉』單號，確定仍要改為已出轉運嗎？")) return;
 
   const trackingTaiwanRaw = prompt("輸入台灣單號（可留空，之後可在此單修改）：") || "";
   const taiwanTrackingId = normalizeTaiwanTrackingInput(trackingTaiwanRaw);
+
+  const existingGroup = state.data.taiwan_parcel_groups.find((g) => g.tracking_id_taiwan === taiwanTrackingId);
+  if (existingGroup) {
+    const mergeOk = confirm(
+      `台灣單號「${getTaiwanTrackingDisplayValue(taiwanTrackingId)}」已經有 ${existingGroup.china_tracking_ids.length} 件在已轉出清單。\n\n確定要併入同一張嗎？`
+    );
+    if (!mergeOk) return toast("已取消，請改用新的台灣單號");
+  }
 
   const methodRaw = prompt("輸入寄出方式（超商/黑貓/新竹，必填）：", "新竹");
   if (methodRaw === null) return toast("已略過操作");
@@ -2099,13 +2119,14 @@ function markSelectedShipped() {
   group.settlement_total_twd = Number(twd.toFixed(2));
   group.shipping_method = shippingMethod;
   group.shipping_address = shippingAddress;
-  selected.forEach((parcel) => {
+  targets.forEach((parcel) => {
     parcel.status = "shipped_to_taiwan";
     parcel.taiwan_parcel_group_id = group.id;
     if (!parcel.shipped_to_taiwan_time) parcel.shipped_to_taiwan_time = nowIso();
     linkParcelToTaiwanGroup(parcel.id, group.id);
   });
 
+  state.selectedParcelIds.clear();
   persistAndRender("已更新為已出轉運");
 }
 
