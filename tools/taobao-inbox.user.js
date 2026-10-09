@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         單號分類工具：淘寶訊息同步
 // @namespace    order-number-tool
-// @version      1.0.0
+// @version      1.1.0
 // @description  讀取淘寶網頁版聊天裡的訊息，送到單號分類工具自動入庫、建立待確認出貨
-// @match        https://market.m.taobao.com/app/im/*
+// @match        https://market.m.taobao.com/*
+// @noframes
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -15,8 +16,12 @@
 (function () {
   "use strict";
 
+  if (!location.pathname.includes("/app/im/")) return;
+  console.log("[單號工具同步] 已啟動");
+
   const BACKEND_URL = "https://order-number-production.up.railway.app";
-  const POLL_MS = 5000;
+  const DEBOUNCE_MS = 2000;
+  const FALLBACK_POLL_MS = 60000;
   const MAX_REMEMBERED_IDS = 3000;
   const TS_RE = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/;
   const TS_RE_GLOBAL = new RegExp(TS_RE.source, "g");
@@ -40,8 +45,12 @@
       <button data-role="diag" style="cursor:pointer">診斷</button>
       <button data-role="secret" style="cursor:pointer">重設密鑰</button>
     </div>`;
-  document.body.appendChild(panel);
   const statusEl = panel.querySelector('[data-role="status"]');
+
+  function ensurePanel() {
+    if (!panel.isConnected) (document.body || document.documentElement).appendChild(panel);
+  }
+  ensurePanel();
 
   function setStatus(text, isError) {
     statusEl.textContent = text;
@@ -194,6 +203,20 @@
     alert("診斷資料已複製，貼給工程師即可。");
   });
 
-  setInterval(() => syncOnce(false), POLL_MS);
+  // Only react when the page actually changes (new message rendered); the slow poll is a safety net.
+  let debounceTimer = null;
+  const observer = new MutationObserver((mutations) => {
+    if (debounceTimer || mutations.every((m) => panel.contains(m.target))) return;
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      syncOnce(false);
+    }, DEBOUNCE_MS);
+  });
+  observer.observe(document.body || document.documentElement, { childList: true, subtree: true, characterData: true });
+
+  setInterval(() => {
+    ensurePanel();
+    syncOnce(false);
+  }, FALLBACK_POLL_MS);
   setTimeout(() => syncOnce(false), 1500);
 })();
