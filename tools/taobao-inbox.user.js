@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         單號分類工具：淘寶訊息同步
 // @namespace    order-number-tool
-// @version      1.1.0
+// @version      1.2.0
 // @description  讀取淘寶網頁版聊天裡的訊息，送到單號分類工具自動入庫、建立待確認出貨
 // @match        https://market.m.taobao.com/*
 // @noframes
@@ -70,13 +70,34 @@
     return (text.match(TS_RE_GLOBAL) || []).length;
   }
 
+  // Chat UI may live inside open shadow roots or same-origin iframes, so search all of them.
+  function collectRoots() {
+    const roots = [];
+    const visit = (root) => {
+      roots.push(root);
+      root.querySelectorAll("*").forEach((el) => {
+        if (el.shadowRoot) visit(el.shadowRoot);
+        if (el.tagName === "IFRAME") {
+          try {
+            if (el.contentDocument && el.contentDocument.body) visit(el.contentDocument);
+          } catch {
+            // cross-origin iframe
+          }
+        }
+      });
+    };
+    visit(document);
+    return roots;
+  }
+
   // The message list is the smallest element holding the most "yyyy-mm-dd hh:mm:ss" headers.
   function findMessageContainer() {
     if (container && container.isConnected && countTimestamps(container.innerText || "")) return container;
     let best = null;
     let bestCount = 0;
     let bestLength = Infinity;
-    document.querySelectorAll("div, ul, section").forEach((el) => {
+    const candidates = collectRoots().flatMap((root) => [...root.querySelectorAll("div, ul, section")]);
+    candidates.forEach((el) => {
       if (panel.contains(el)) return;
       const text = el.innerText || "";
       const count = countTimestamps(text);
@@ -192,12 +213,20 @@
     container = null;
     const target = findMessageContainer();
     const text = target ? target.innerText || "" : "";
+    const roots = collectRoots();
+    const bodyText = document.body ? document.body.innerText || "" : "";
     const report = {
       url: location.href,
       containerFound: Boolean(target),
       containerTag: target ? `${target.tagName}.${target.className}` : null,
       parsed: parseMessages(text).slice(-5),
-      rawTail: text.slice(-1500)
+      rawTail: text.slice(-1500),
+      iframes: [...document.querySelectorAll("iframe")].map((f) => f.src || "(no src)"),
+      shadowRoots: roots.filter((r) => r instanceof ShadowRoot).length,
+      sameOriginFrames: roots.filter((r) => r instanceof Document && r !== document).length,
+      timeLikeSamples: (bodyText.match(/\d{1,4}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\s+\d{1,2}:\d{2}(?::\d{2})?|\b\d{1,2}:\d{2}(?::\d{2})?\b/g) || []).slice(-10),
+      bodyTextLength: bodyText.length,
+      bodyTail: bodyText.slice(-1500)
     };
     GM_setClipboard(JSON.stringify(report, null, 2));
     alert("診斷資料已複製，貼給工程師即可。");
