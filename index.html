@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=20260326-26" />
   <link rel="manifest" href="./manifest.webmanifest?v=20260326-26" />
   <title>單號分類工具</title>
-  <link rel="stylesheet" href="./styles.css?v=20260326-28" />
+  <link rel="stylesheet" href="./styles.css?v=20260326-29" />
 </head>
 <body>
   <header class="app-header">
@@ -46,6 +46,15 @@
       <div id="emptyState" class="empty-state">請先從左側選擇朋友，或新增一位朋友開始。</div>
 
       <div id="friendPanel" class="hidden">
+        <section id="inboxCard" class="card inbox-card hidden">
+          <h3>淘寶自動抓取</h3>
+          <div id="inboxPendingList"></div>
+          <details class="inbox-log">
+            <summary>最近自動處理紀錄</summary>
+            <ul id="inboxLogList"></ul>
+          </details>
+        </section>
+
         <section id="addParcelCard" class="card collapsible-card">
           <div class="card-click-header"><h3>新增單號（每行一筆：中國單號 [備註]）</h3></div>
           <div id="addParcelBody" class="hidden">
@@ -176,8 +185,8 @@
     </div>
   </div>
 
-  <script src="./app-config.js?v=20260326-28"></script>
-  <script src="./app.js?v=20260326-28"></script>
+  <script src="./app-config.js?v=20260326-29"></script>
+  <script src="./app.js?v=20260326-29"></script>
   <script
     src="https://painpoint-hub-production.up.railway.app/feedback-plugin.js?v=4"
     data-api="https://painpoint-hub-production.up.railway.app"

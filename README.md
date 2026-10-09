@@ -60,6 +60,17 @@ node -e "const b=require('bcryptjs'); console.log(b.hashSync('你的密碼', 12)
 
 把輸出的字串貼到 Railway 的 `AUTH_PASSWORD_HASH`。
 
+### 淘寶訊息自動同步（選用）
+
+電腦開著淘寶網頁版聊天，外掛會把集運站的訊息送到後端：
+- `0.9 單號`（到倉報重量）：自動入庫並填重量，只更新已 key 過的單號
+- 多筆 `重量 單號` ＋ `拍N`（出貨報價）：在 App 顯示「待確認出貨」，確認後才出貨；地址訊息會自動帶入
+
+設定：
+1. Railway 加環境變數 `INBOX_SECRET=長隨機字串`
+2. 電腦 Chrome 安裝 Tampermonkey，安裝 `tools/taobao-inbox.user.js`
+3. 打開 `https://market.m.taobao.com/app/im/chat/index.html`，第一次會要求貼上 `INBOX_SECRET`
+
 ### API 健康檢查
 
 - `GET /health`

@@ -44,7 +44,7 @@ function isOriginAllowed(origin) {
 const corsConfig = {
   origin(origin, callback) {
     if (isOriginAllowed(origin)) return callback(null, true);
-    return callback(new Error("Not allowed by CORS"));
+    return callback(null, false);
   },
   credentials: true
 };
@@ -610,6 +610,267 @@ app.get("/api/horus/address-by-tracking", requireHorusSecret, async (req, res) =
   } catch (error) {
     console.error(error);
     return res.status(500).json({ ok: false, error: "READ_FAILED" });
+  }
+});
+
+const INBOX_SECRET = (process.env.INBOX_SECRET || "").trim();
+const INBOX_MAX_PROCESSED = 5000;
+const INBOX_MAX_LOG = 100;
+const INBOX_ADDRESS_WINDOW_MS = 60 * 60 * 1000;
+
+const INBOX_WEIGHT_LINE = /^(\d+(?:\.\d+)?)\s*(?:kg|公斤)?\s+([A-Za-z0-9]{6,})(?:\s+.*)?$/i;
+const INBOX_PAY_LINE = /^拍\s*[:：]?\s*(\d+(?:\.\d+)?)/;
+const INBOX_TOTAL_LINE = /^(?:合计|合計)\s*[:：]?\s*(\d+(?:\.\d+)?)/;
+const INBOX_PHONE = /09\d{8}/;
+
+function requireInboxSecret(req, res, next) {
+  if (!INBOX_SECRET) return res.status(503).json({ ok: false, error: "INBOX_SECRET_NOT_CONFIGURED" });
+  const auth = String(req.headers.authorization || "").trim();
+  if (!safeEqualString(auth, `Bearer ${INBOX_SECRET}`)) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  return next();
+}
+
+function inboxFilePath() {
+  return path.join(path.dirname(activeDataFilePath), "inbox.json");
+}
+
+async function readInbox() {
+  try {
+    const raw = await fs.readFile(inboxFilePath(), "utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    return {
+      processed: Array.isArray(parsed.processed) ? parsed.processed : [],
+      pending: Array.isArray(parsed.pending) ? parsed.pending : [],
+      log: Array.isArray(parsed.log) ? parsed.log : []
+    };
+  } catch {
+    return { processed: [], pending: [], log: [] };
+  }
+}
+
+async function writeInbox(inbox) {
+  const next = {
+    processed: inbox.processed.slice(-INBOX_MAX_PROCESSED),
+    pending: inbox.pending,
+    log: inbox.log.slice(-INBOX_MAX_LOG)
+  };
+  const filePath = inboxFilePath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(`${filePath}.tmp`, JSON.stringify(next, null, 2), "utf8");
+  await fs.rename(`${filePath}.tmp`, filePath);
+}
+
+function hashMessageId(id) {
+  return crypto.createHash("sha1").update(String(id)).digest("hex").slice(0, 20);
+}
+
+function parseTaobaoTime(ts) {
+  const value = Date.parse(`${String(ts || "").trim().replace(" ", "T")}+08:00`);
+  return Number.isFinite(value) ? value : Date.now();
+}
+
+function parseInboxMessage(text) {
+  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const items = [];
+  const otherLines = [];
+  let cny = null;
+  let totalWeight = null;
+
+  lines.forEach((line) => {
+    const weightMatch = line.match(INBOX_WEIGHT_LINE);
+    if (weightMatch) {
+      items.push({ weight: Number(weightMatch[1]), tracking: weightMatch[2] });
+      return;
+    }
+    const payMatch = line.match(INBOX_PAY_LINE);
+    if (payMatch) {
+      cny = Number(payMatch[1]);
+      return;
+    }
+    const totalMatch = line.match(INBOX_TOTAL_LINE);
+    if (totalMatch) {
+      totalWeight = Number(totalMatch[1]);
+      return;
+    }
+    otherLines.push(line);
+  });
+
+  const address = otherLines.some((line) => INBOX_PHONE.test(line.replace(/[\s-]/g, "")))
+    ? otherLines.join(" ").replace(/\s+/g, " ").trim()
+    : "";
+
+  // "拍N" is the forwarder asking for payment, which only happens on a shipping quote.
+  let type = "ignore";
+  if (items.length && cny !== null) type = "quote";
+  else if (items.length) type = "inbound";
+  else if (address) type = "address";
+
+  return { type, items, cny, totalWeight, address };
+}
+
+function buildServerTrackingIndex(data) {
+  const index = new Map();
+  data.friends.forEach((friend) => {
+    friend.parcels.forEach((parcel) => {
+      const key = String(parcel.tracking_id_china || "").trim().toLowerCase();
+      if (!key) return;
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push({ friend, parcel });
+    });
+  });
+  return index;
+}
+
+function applyInboundToData(data, items, nowIso) {
+  const index = buildServerTrackingIndex(data);
+  const updated = [];
+  const missing = [];
+  const skipped = [];
+
+  items.forEach(({ tracking, weight }) => {
+    const entries = index.get(tracking.toLowerCase()) || [];
+    if (!entries.length) {
+      missing.push(tracking);
+      return;
+    }
+    entries.forEach(({ friend, parcel }) => {
+      if (parcel.status === "shipped_to_taiwan") {
+        skipped.push(tracking);
+        return;
+      }
+      const changed = parcel.status !== "arrived_at_warehouse" || Number(parcel.weight_kg) !== weight;
+      parcel.weight_kg = weight;
+      if (parcel.status !== "arrived_at_warehouse") {
+        parcel.status = "arrived_at_warehouse";
+        parcel.arrived_at_warehouse_time = nowIso;
+      }
+      if (changed) updated.push({ tracking, weight, owner: friend.name || "", remark: parcel.remark || "" });
+    });
+  });
+
+  return { updated, missing, skipped };
+}
+
+async function processInboxMessages(messages) {
+  return withWriteLock(async () => {
+    const inbox = await readInbox();
+    const processedSet = new Set(inbox.processed);
+    const fresh = messages
+      .map((message) => ({ ...message, hash: hashMessageId(message.id) }))
+      .filter((message) => !processedSet.has(message.hash))
+      .sort((a, b) => parseTaobaoTime(a.ts) - parseTaobaoTime(b.ts));
+
+    const summary = { received: messages.length, fresh: fresh.length, inbound: 0, quotes: 0, addresses: 0 };
+    if (!fresh.length) return summary;
+
+    let data = null;
+    let dataChanged = false;
+    const nowIso = new Date().toISOString();
+
+    for (const message of fresh) {
+      const parsed = parseInboxMessage(message.text);
+      const messageAt = parseTaobaoTime(message.ts);
+
+      if (parsed.type === "inbound") {
+        data = data || await readDataFile();
+        const result = applyInboundToData(data, parsed.items, nowIso);
+        if (result.updated.length) dataChanged = true;
+        summary.inbound += result.updated.length;
+        if (result.updated.length || result.missing.length) {
+          const parts = [];
+          if (result.updated.length) {
+            parts.push(`自動入庫 ${result.updated.length} 筆：${result.updated.map((u) => `${u.weight.toFixed(1)} ${u.tracking} ${u.owner}`).join("、")}`);
+          }
+          if (result.missing.length) parts.push(`單號未key：${result.missing.join("、")}`);
+          inbox.log.push({ at: nowIso, message_ts: message.ts, type: "inbound", text: parts.join("；") });
+        }
+      } else if (parsed.type === "quote") {
+        data = data || await readDataFile();
+        const index = buildServerTrackingIndex(data);
+        const shippable = parsed.items.filter((item) => (index.get(item.tracking.toLowerCase()) || [])
+          .some(({ parcel }) => parcel.status !== "shipped_to_taiwan"));
+        if (shippable.length) {
+          inbox.pending.push({
+            id: `pend_${message.hash}`,
+            message_ts: message.ts,
+            created_at: nowIso,
+            items: parsed.items,
+            total_weight: parsed.totalWeight,
+            cny: parsed.cny,
+            address: parsed.address
+          });
+          summary.quotes += 1;
+          inbox.log.push({ at: nowIso, message_ts: message.ts, type: "quote", text: `收到出貨報價 ${parsed.items.length} 筆，拍 ${parsed.cny}，待確認` });
+        }
+      } else if (parsed.type === "address") {
+        const target = [...inbox.pending].reverse().find((pending) => !pending.address
+          && Math.abs(messageAt - parseTaobaoTime(pending.message_ts)) <= INBOX_ADDRESS_WINDOW_MS);
+        if (target) {
+          target.address = parsed.address;
+          summary.addresses += 1;
+        }
+      }
+
+      inbox.processed.push(message.hash);
+    }
+
+    if (dataChanged) {
+      await backupCurrentDataFile();
+      await writeDataFile({ ...data, version: data.version + 1 });
+    }
+    await writeInbox(inbox);
+    return summary;
+  });
+}
+
+app.post("/api/inbox/messages", requireInboxSecret, async (req, res) => {
+  const raw = Array.isArray(req.body?.messages) ? req.body.messages : null;
+  if (!raw) return res.status(400).json({ ok: false, error: "INVALID_PAYLOAD" });
+  const messages = raw
+    .slice(0, 500)
+    .filter((m) => m && typeof m.id === "string" && typeof m.text === "string")
+    .map((m) => ({ id: m.id.slice(0, 6000), ts: String(m.ts || ""), sender: String(m.sender || ""), text: m.text.slice(0, 5000) }));
+  try {
+    const summary = await processInboxMessages(messages);
+    return res.json({ ok: true, ...summary });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "INBOX_FAILED" });
+  }
+});
+
+app.get("/api/inbox/state", requireAppAuth, async (_req, res) => {
+  try {
+    const inbox = await readInbox();
+    return res.json({ ok: true, pending: inbox.pending, log: inbox.log.slice(-20) });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "READ_FAILED" });
+  }
+});
+
+app.post("/api/inbox/pending/:id/resolve", requireAppAuth, async (req, res) => {
+  const action = req.body?.action === "confirmed" ? "confirmed" : "dismissed";
+  try {
+    const found = await withWriteLock(async () => {
+      const inbox = await readInbox();
+      const target = inbox.pending.find((p) => p.id === req.params.id);
+      if (!target) return false;
+      inbox.pending = inbox.pending.filter((p) => p.id !== req.params.id);
+      inbox.log.push({
+        at: new Date().toISOString(),
+        message_ts: target.message_ts,
+        type: action,
+        text: action === "confirmed" ? `已確認出貨 ${target.items.length} 筆` : `已略過出貨報價 ${target.items.length} 筆`
+      });
+      await writeInbox(inbox);
+      return true;
+    });
+    if (!found) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "WRITE_FAILED" });
   }
 });
 

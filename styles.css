@@ -357,6 +357,55 @@ th, td {
   border-radius: 8px;
 }
 
+.inbox-card {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+
+.inbox-card h3 {
+  margin-bottom: 8px;
+}
+
+.inbox-pending {
+  border: 1px solid #fcd34d;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.inbox-pending-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.inbox-pending ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+
+.inbox-pending-meta {
+  font-size: 13px;
+  color: #374151;
+}
+
+.inbox-missing {
+  color: var(--danger);
+}
+
+.inbox-log summary {
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.inbox-log ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #374151;
+}
+
 .auth-overlay {
   position: fixed;
   inset: 0;

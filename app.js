@@ -73,6 +73,9 @@ const els = {
   sidebar: document.getElementById("sidebar"),
   sidebarBackdrop: document.getElementById("sidebarBackdrop"),
   toast: document.getElementById("toast"),
+  inboxCard: document.getElementById("inboxCard"),
+  inboxPendingList: document.getElementById("inboxPendingList"),
+  inboxLogList: document.getElementById("inboxLogList"),
   authOverlay: document.getElementById("authOverlay"),
   loginUsername: document.getElementById("loginUsername"),
   loginPassword: document.getElementById("loginPassword"),
@@ -92,6 +95,7 @@ const state = {
   saving: false,
   syncing: false,
   pendingSyncRender: false,
+  inbox: { pending: [], log: [] },
   shippedCollapsed: true,
   friendListCollapsed: true,
   addParcelCollapsed: true,
@@ -2031,6 +2035,7 @@ function render() {
   renderFriendList();
   renderFriendSelects();
   renderFriendPanel();
+  renderInbox();
 }
 
 function applyGlobalSearchFilter() {
@@ -2084,6 +2089,12 @@ function markSelectedShipped() {
   const hasPending = targets.some((parcel) => parcel.status === "pending_arrival");
   if (hasPending && !confirm("選取中包含『未到集運倉』單號，確定仍要改為已出轉運嗎？")) return;
 
+  const details = promptShipmentDetails();
+  if (!details) return;
+  shipParcels(targets, details);
+}
+
+function promptShipmentDetails(defaults = {}) {
   const trackingTaiwanRaw = prompt("輸入台灣單號（可留空，之後可在此單修改）：") || "";
   const taiwanTrackingId = normalizeTaiwanTrackingInput(trackingTaiwanRaw);
 
@@ -2092,33 +2103,60 @@ function markSelectedShipped() {
     const mergeOk = confirm(
       `台灣單號「${getTaiwanTrackingDisplayValue(taiwanTrackingId)}」已經有 ${existingGroup.china_tracking_ids.length} 件在已轉出清單。\n\n確定要併入同一張嗎？`
     );
-    if (!mergeOk) return toast("已取消，請改用新的台灣單號");
+    if (!mergeOk) {
+      toast("已取消，請改用新的台灣單號");
+      return null;
+    }
   }
 
   const methodRaw = prompt("輸入寄出方式（超商/黑貓/新竹，必填）：", "新竹");
-  if (methodRaw === null) return toast("已略過操作");
+  if (methodRaw === null) {
+    toast("已略過操作");
+    return null;
+  }
   const shippingMethod = (methodRaw || "").trim();
-  if (!["超商", "黑貓", "新竹"].includes(shippingMethod)) return toast("寄出方式僅可填：超商/黑貓/新竹");
+  if (!["超商", "黑貓", "新竹"].includes(shippingMethod)) {
+    toast("寄出方式僅可填：超商/黑貓/新竹");
+    return null;
+  }
 
-  const shippingAddressRaw = prompt("輸入地址/門市（可空白）：", "");
-  if (shippingAddressRaw === null) return toast("已略過操作");
-  const shippingAddress = (shippingAddressRaw || "").trim();
+  const shippingAddressRaw = prompt("輸入地址/門市（可空白）：", defaults.address || "");
+  if (shippingAddressRaw === null) {
+    toast("已略過操作");
+    return null;
+  }
 
-  const cnyRaw = prompt("輸入人民幣總金額（必填）：", "");
-  if (cnyRaw === null) return toast("已略過操作");
-  const cny = Number.parseFloat((cnyRaw || "").trim());
-  if (!Number.isFinite(cny) || cny < 0) return toast("人民幣金額格式錯誤");
+  const cnyRaw = prompt("輸入人民幣總金額（必填）：", defaults.cny ?? "");
+  if (cnyRaw === null) {
+    toast("已略過操作");
+    return null;
+  }
+  const cny = Number.parseFloat(String(cnyRaw).trim());
+  if (!Number.isFinite(cny) || cny < 0) {
+    toast("人民幣金額格式錯誤");
+    return null;
+  }
 
   const twdRaw = prompt("輸入台幣總金額（必填）：", "");
-  if (twdRaw === null) return toast("已略過操作");
+  if (twdRaw === null) {
+    toast("已略過操作");
+    return null;
+  }
   const twd = Number.parseFloat((twdRaw || "").trim());
-  if (!Number.isFinite(twd) || twd < 0) return toast("台幣金額格式錯誤");
+  if (!Number.isFinite(twd) || twd < 0) {
+    toast("台幣金額格式錯誤");
+    return null;
+  }
 
-  const group = upsertTaiwanGroupByTracking(taiwanTrackingId);
-  group.settlement_total_cny = Number(cny.toFixed(2));
-  group.settlement_total_twd = Number(twd.toFixed(2));
-  group.shipping_method = shippingMethod;
-  group.shipping_address = shippingAddress;
+  return { taiwanTrackingId, shippingMethod, shippingAddress: (shippingAddressRaw || "").trim(), cny, twd };
+}
+
+function shipParcels(targets, details) {
+  const group = upsertTaiwanGroupByTracking(details.taiwanTrackingId);
+  group.settlement_total_cny = Number(details.cny.toFixed(2));
+  group.settlement_total_twd = Number(details.twd.toFixed(2));
+  group.shipping_method = details.shippingMethod;
+  group.shipping_address = details.shippingAddress;
   targets.forEach((parcel) => {
     parcel.status = "shipped_to_taiwan";
     parcel.taiwan_parcel_group_id = group.id;
@@ -2128,6 +2166,133 @@ function markSelectedShipped() {
 
   state.selectedParcelIds.clear();
   persistAndRender("已更新為已出轉運");
+}
+
+async function fetchInboxState() {
+  if (!state.authReady) return;
+  try {
+    const response = await authRequest("/api/inbox/state", { method: "GET" });
+    if (!response.ok) return;
+    const json = await response.json();
+    state.inbox = { pending: json.pending || [], log: json.log || [] };
+    renderInbox();
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function resolvePendingShipment(id, action) {
+  try {
+    await authRequest(`/api/inbox/pending/${encodeURIComponent(id)}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action })
+    });
+  } catch (error) {
+    console.error(error);
+  }
+  await fetchInboxState();
+}
+
+function confirmPendingShipment(pending) {
+  const index = buildTrackingIndex();
+  const targets = [];
+  const missing = [];
+  const alreadyShipped = [];
+
+  pending.items.forEach((item) => {
+    const entries = index.get(item.tracking.toLowerCase()) || [];
+    if (!entries.length) {
+      missing.push(item.tracking);
+      return;
+    }
+    entries.forEach(({ parcel }) => {
+      if (parcel.status === "shipped_to_taiwan") alreadyShipped.push(item.tracking);
+      else targets.push({ parcel, weight: item.weight });
+    });
+  });
+
+  if (!targets.length) {
+    if (confirm("這筆報價的單號都已出轉運或還沒 key，要直接略過嗎？")) resolvePendingShipment(pending.id, "dismissed");
+    return;
+  }
+  const notes = [];
+  if (missing.length) notes.push(`還沒 key：${missing.join("、")}`);
+  if (alreadyShipped.length) notes.push(`已出轉運：${alreadyShipped.join("、")}`);
+  if (notes.length && !confirm(`${notes.join("\n")}\n\n其餘 ${targets.length} 筆照常出貨？`)) return;
+
+  const details = promptShipmentDetails({ address: pending.address, cny: pending.cny });
+  if (!details) return;
+
+  targets.forEach(({ parcel, weight }) => {
+    if (Number.isFinite(weight)) parcel.weight_kg = weight;
+  });
+  shipParcels(targets.map(({ parcel }) => parcel), details);
+  resolvePendingShipment(pending.id, "confirmed");
+}
+
+function renderInbox() {
+  if (!els.inboxCard) return;
+  const { pending, log } = state.inbox;
+  els.inboxCard.classList.toggle("hidden", !pending.length && !log.length);
+
+  els.inboxPendingList.innerHTML = "";
+  if (!pending.length) {
+    const empty = document.createElement("p");
+    empty.className = "helper-text";
+    empty.textContent = "目前沒有待確認的出貨。";
+    els.inboxPendingList.appendChild(empty);
+  }
+
+  const index = buildTrackingIndex();
+  pending.forEach((item) => {
+    const box = document.createElement("div");
+    box.className = "inbox-pending";
+
+    const title = document.createElement("div");
+    title.className = "inbox-pending-title";
+    title.textContent = `待確認出貨｜${item.message_ts || ""}`;
+
+    const list = document.createElement("ul");
+    item.items.forEach((line) => {
+      const entry = (index.get(line.tracking.toLowerCase()) || [])[0];
+      const li = document.createElement("li");
+      const owner = entry ? entry.friend.name : "（單號未key）";
+      const remark = entry?.parcel?.remark ? ` ${entry.parcel.remark}` : "";
+      const shipped = entry?.parcel?.status === "shipped_to_taiwan" ? "（已出轉運）" : "";
+      li.textContent = `${Number(line.weight).toFixed(1)} ${line.tracking} ${owner}${remark}${shipped}`;
+      if (!entry) li.className = "inbox-missing";
+      list.appendChild(li);
+    });
+
+    const meta = document.createElement("div");
+    meta.className = "inbox-pending-meta";
+    meta.textContent = `合計 ${item.total_weight ?? "-"}kg｜人民幣 ${item.cny ?? "未抓到"}｜地址：${item.address || "未抓到"}`;
+
+    const actions = document.createElement("div");
+    actions.className = "button-row wrap";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "btn success";
+    confirmBtn.textContent = "確認出貨";
+    confirmBtn.addEventListener("click", () => confirmPendingShipment(item));
+    const dismissBtn = document.createElement("button");
+    dismissBtn.className = "btn";
+    dismissBtn.textContent = "略過";
+    dismissBtn.addEventListener("click", () => {
+      if (confirm("確定略過這筆出貨報價？")) resolvePendingShipment(item.id, "dismissed");
+    });
+    actions.append(confirmBtn, dismissBtn);
+
+    box.append(title, list, meta, actions);
+    els.inboxPendingList.appendChild(box);
+  });
+
+  els.inboxLogList.innerHTML = "";
+  [...log].reverse().slice(0, 10).forEach((entry) => {
+    const li = document.createElement("li");
+    li.textContent = `${formatTime(entry.at)}｜${entry.text}`;
+    els.inboxLogList.appendChild(li);
+  });
 }
 
 function copySelectedChina() {
@@ -2208,6 +2373,7 @@ async function loadDataAndRender() {
 
   state.selectedFriendId = state.data.friends[0]?.id || null;
   render();
+  fetchInboxState();
   return true;
 }
 
@@ -2346,11 +2512,15 @@ async function init() {
     els.shippedTaiwanSearch.addEventListener("input", renderShippedSummary);
   }
 
+  const syncNow = () => {
+    refreshFromServer();
+    fetchInboxState();
+  };
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refreshFromServer();
+    if (!document.hidden) syncNow();
   });
-  window.addEventListener("focus", refreshFromServer);
-  setInterval(refreshFromServer, 15000);
+  window.addEventListener("focus", syncNow);
+  setInterval(syncNow, 15000);
 
   const hasSession = await checkSession();
   if (hasSession) {
