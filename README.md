@@ -71,6 +71,15 @@ node -e "const b=require('bcryptjs'); console.log(b.hashSync('你的密碼', 12)
 2. 電腦 Chrome 安裝 Tampermonkey，安裝 `tools/taobao-inbox.user.js`
 3. 打開 `https://market.m.taobao.com/app/im/chat/index.html`，第一次會要求貼上 `INBOX_SECRET`
 
+#### 淘寶桌面版（不用開瀏覽器）
+
+`tools/taobao-desktop-sync.mjs` 透過除錯埠讀淘寶桌面版的聊天頁，只處理「捷豹國際集運站」對話。
+
+1. 工作排程器 `TaobaoDesktopDebug`：登入 Windows 時以 `--remote-debugging-port=9333` 啟動淘寶桌面版
+2. 工作排程器 `OrderNumberTaobaoSync`：登入後 1 分鐘在背景執行同步程式，每 15 秒檢查一次
+3. 第一次設定密鑰：`node "C:\Users\rsz97\Order number\tools\taobao-desktop-sync.mjs" --set-secret`
+4. 密鑰、已送出紀錄、日誌存在 `%LOCALAPPDATA%\order-number-taobao-sync\`（不進 git）
+
 ### API 健康檢查
 
 - `GET /health`
