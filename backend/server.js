@@ -839,6 +839,74 @@ app.post("/api/inbox/messages", requireInboxSecret, async (req, res) => {
   }
 });
 
+async function addTaobaoOrders(ownerName, orders) {
+  return withWriteLock(async () => {
+    const data = await readDataFile();
+    const owner = data.friends.find((friend) => (friend.name || "").trim() === ownerName);
+    if (!owner) return { ownerMissing: true };
+
+    const index = buildServerTrackingIndex(data);
+    const nowIso = new Date().toISOString();
+    const added = [];
+    const existing = [];
+
+    orders.forEach(({ tracking, remark }) => {
+      const key = tracking.toLowerCase();
+      if (index.has(key)) {
+        existing.push(tracking);
+        return;
+      }
+      const parcel = {
+        id: crypto.randomUUID(),
+        tracking_id_china: tracking,
+        remark,
+        status: "pending_arrival",
+        shipping_priority: "normal",
+        weight_kg: 0,
+        taiwan_parcel_group_id: null,
+        created_at: nowIso,
+        arrived_at_warehouse_time: null,
+        shipped_to_taiwan_time: null
+      };
+      owner.parcels.push(parcel);
+      index.set(key, [{ friend: owner, parcel }]);
+      added.push({ tracking, remark });
+    });
+
+    if (added.length) {
+      await backupCurrentDataFile();
+      await writeDataFile({ ...data, version: data.version + 1 });
+      const inbox = await readInbox();
+      inbox.log.push({
+        at: nowIso,
+        message_ts: "",
+        type: "orders",
+        text: `淘寶訂單自動新增 ${added.length} 筆（${ownerName}）：${added.map((a) => `${a.tracking} ${a.remark}`.trim()).join("、")}`
+      });
+      await writeInbox(inbox);
+    }
+    return { added: added.length, existing: existing.length };
+  });
+}
+
+app.post("/api/inbox/orders", requireInboxSecret, async (req, res) => {
+  const ownerName = String(req.body?.owner || "").trim();
+  const raw = Array.isArray(req.body?.orders) ? req.body.orders : null;
+  if (!ownerName || !raw) return res.status(400).json({ ok: false, error: "INVALID_PAYLOAD" });
+  const orders = raw
+    .slice(0, 300)
+    .map((o) => ({ tracking: String(o?.tracking || "").trim(), remark: String(o?.remark || "").trim().slice(0, 100) }))
+    .filter((o) => /^[A-Za-z0-9]{6,40}$/.test(o.tracking));
+  try {
+    const result = await addTaobaoOrders(ownerName, orders);
+    if (result.ownerMissing) return res.status(404).json({ ok: false, error: "OWNER_NOT_FOUND" });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "ORDERS_FAILED" });
+  }
+});
+
 app.get("/api/inbox/state", requireAppAuth, async (_req, res) => {
   try {
     const inbox = await readInbox();

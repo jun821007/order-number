@@ -4,6 +4,7 @@
 // 用法：
 //   node taobao-desktop-sync.mjs --set-secret   設定 INBOX_SECRET（存在本機，不進 git）
 //   node taobao-desktop-sync.mjs --once         只同步一次並印出結果
+//   node taobao-desktop-sync.mjs --orders       立即檢查一次淘寶已發貨訂單，新單號加到件主名下
 //   node taobao-desktop-sync.mjs                常駐，每隔 POLL_MS 同步一次
 
 import fs from "node:fs";
@@ -14,8 +15,16 @@ const BACKEND_URL = process.env.ORDER_TOOL_BACKEND_URL || "https://order-number-
 const DEBUG_PORT = Number(process.env.TAOBAO_DEBUG_PORT || 9333);
 const TARGET_CONVERSATION = process.env.TAOBAO_TARGET_CONVERSATION || "捷豹國際集運站";
 const POLL_MS = Number(process.env.TAOBAO_POLL_MS || 15000);
+const ORDER_POLL_MS = Number(process.env.TAOBAO_ORDER_POLL_MS || 60 * 60 * 1000);
+const ORDER_OWNER = process.env.TAOBAO_ORDER_OWNER || "鈞";
+const EXCLUDED_SELLERS = new Set((process.env.TAOBAO_EXCLUDED_SELLERS || "jiejie1378918").split(",").map((s) => s.trim()).filter(Boolean));
+const ORDER_MAX_PAGES = 5;
+const ORDER_DETAIL_DELAY_MS = 1500;
+const REMARK_MAX_CHARS = 20;
 const MAX_REMEMBERED_IDS = 3000;
 const MAX_LOG_BYTES = 1024 * 1024;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const APP_DIR = path.join(process.env.LOCALAPPDATA || process.env.HOME || ".", "order-number-taobao-sync");
 const CONFIG_FILE = path.join(APP_DIR, "config.json");
@@ -100,9 +109,9 @@ function evaluateInPage(wsUrl, expression) {
     const timer = setTimeout(() => {
       ws.close();
       reject(new Error("DevTools 逾時"));
-    }, 10000);
+    }, 30000);
     ws.addEventListener("open", () => {
-      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
+      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true, awaitPromise: true } }));
     });
     ws.addEventListener("message", (event) => {
       const msg = JSON.parse(event.data);
@@ -119,26 +128,178 @@ function evaluateInPage(wsUrl, expression) {
   });
 }
 
-async function postMessages(messages, secret) {
-  const res = await fetch(`${BACKEND_URL}/api/inbox/messages`, {
+async function postToBackend(endpoint, body, secret) {
+  const res = await fetch(`${BACKEND_URL}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(20000)
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, code: json.error });
   return json;
 }
 
-const state = readJson(STATE_FILE, { sentIds: [] });
-let sentIds = new Set(state.sentIds);
+function postMessages(messages, secret) {
+  return postToBackend("/api/inbox/messages", { messages }, secret);
+}
+
+// Calls Taobao's own mtop API from inside a logged-in Taobao page, so the app's cookies and signing are reused.
+async function mtopRequest(wsUrl, options) {
+  const expression = `new Promise((resolve) => {
+    if (!window.lib || !window.lib.mtop) return resolve(JSON.stringify({ err: "NO_MTOP" }));
+    window.lib.mtop.request(${JSON.stringify(options)})
+      .then((r) => resolve(JSON.stringify({ ok: r })))
+      .catch((e) => resolve(JSON.stringify({ err: e })));
+  })`;
+  const result = JSON.parse(await evaluateInPage(wsUrl, expression));
+  if (result.err) {
+    const ret = Array.isArray(result.err?.ret) ? result.err.ret.join(",") : String(result.err);
+    throw new Error(`淘寶介面錯誤 ${options.api}：${ret}`);
+  }
+  return result.ok;
+}
+
+async function fetchShippedOrders(wsUrl) {
+  const orders = [];
+  for (let page = 1; page <= ORDER_MAX_PAGES; page++) {
+    const res = await mtopRequest(wsUrl, {
+      api: "mtop.taobao.order.queryboughtlistv2",
+      v: "1.0",
+      ecode: 1,
+      type: "GET",
+      timeout: 15000,
+      data: { tabCode: "waitConfirm", page, OrderType: "OrderList", appName: "tborder", appVersion: "3.0", condition: JSON.stringify({ version: "1.0.0" }) }
+    });
+    const result = JSON.parse(res.data.result);
+    (result.mainOrders || []).forEach((order) => {
+      orders.push({
+        id: String(order.id),
+        seller: order.seller?.nick || "",
+        titles: (order.subOrders || []).map((sub) => sub.itemInfo?.title || "").filter(Boolean)
+      });
+    });
+    if (page >= Number(result.page?.totalPage || 1)) break;
+  }
+  return orders;
+}
+
+async function queryLogistics(wsUrl, params) {
+  const res = await mtopRequest(wsUrl, {
+    api: "mtop.taobao.logistics.detailorlist.query",
+    v: "1.0",
+    timeout: 15000,
+    ttid: "#t#ip##_h5_web_default",
+    data: params
+  });
+  return res.data || {};
+}
+
+// One order may ship in several packages; Taobao then returns a package list instead of a single trace.
+async function getTrackingNumbers(wsUrl, orderId) {
+  const detail = await queryLogistics(wsUrl, { orderId });
+  const blocks = Object.values(detail.data || {});
+  if (detail.endpoint?.page !== "logisticsPackageList") {
+    const company = blocks.find((block) => block?.tag === "popupBodyCompony");
+    const mailNo = company?.fields?.mailNo;
+    return mailNo ? [mailNo] : [];
+  }
+
+  const numbers = [];
+  for (const block of blocks.filter((b) => b?.tag === "pakcage" || b?.tag === "package")) {
+    const query = String(block.fields?.rightBtnUrl || "").split("?")[1] || "";
+    const params = Object.fromEntries(new URLSearchParams(query));
+    if (params.mailNo) {
+      numbers.push(params.mailNo);
+      continue;
+    }
+    if (!params.orderId) continue;
+    await sleep(ORDER_DETAIL_DELAY_MS);
+    const sub = await queryLogistics(wsUrl, { orderId: params.orderId, logisticsOrderId: params.logisticsOrderId });
+    const company = Object.values(sub.data || {}).find((b) => b?.tag === "popupBodyCompony");
+    if (company?.fields?.mailNo) numbers.push(company.fields.mailNo);
+  }
+  return [...new Set(numbers)];
+}
+
+function shortRemark(titles) {
+  return titles.join("、").replace(/\s+/g, " ").trim().slice(0, REMARK_MAX_CHARS);
+}
+
+async function syncOrders() {
+  const secret = getSecret();
+  if (!secret) return;
+  const found = await findChatPage();
+  if (found.error) {
+    log("略過訂單檢查：淘寶桌面版沒有開或沒登入");
+    return;
+  }
+  const wsUrl = found.page.webSocketDebuggerUrl;
+
+  const orders = (await fetchShippedOrders(wsUrl))
+    .filter((order) => !seenOrders.has(order.id) && !EXCLUDED_SELLERS.has(order.seller));
+  if (!orders.length) {
+    log("訂單檢查完成｜沒有新發貨的訂單");
+    return;
+  }
+
+  const parcels = [];
+  const resolvedOrderIds = [];
+  for (const order of orders) {
+    await sleep(ORDER_DETAIL_DELAY_MS);
+    try {
+      const numbers = await getTrackingNumbers(wsUrl, order.id);
+      // Orders without a tracking number are virtual goods or "no logistics needed"; never revisit them.
+      numbers.forEach((tracking) => parcels.push({ tracking, remark: shortRemark(order.titles), order_id: order.id }));
+      resolvedOrderIds.push(order.id);
+    } catch (error) {
+      log(`查詢訂單 ${order.id} 物流失敗：${error.message}`);
+    }
+  }
+
+  if (parcels.length) {
+    try {
+      const result = await postToBackend("/api/inbox/orders", { owner: ORDER_OWNER, orders: parcels }, secret);
+      log(`訂單檢查完成｜新增單號 ${result.added || 0} 筆，已存在 ${result.existing || 0} 筆`);
+    } catch (error) {
+      if (error.code === "OWNER_NOT_FOUND") log(`單號分類工具裡找不到件主「${ORDER_OWNER}」`);
+      else if (error.status === 401) log("密鑰錯誤：請執行 node taobao-desktop-sync.mjs --set-secret");
+      else log(`送出訂單失敗：${error.message}`);
+      return;
+    }
+  } else {
+    log(`訂單檢查完成｜${resolvedOrderIds.length} 筆新訂單都沒有快遞單號（虛擬商品）`);
+  }
+
+  resolvedOrderIds.forEach((id) => seenOrders.add(id));
+  saveState();
+}
+
+async function maybeSyncOrders() {
+  if (Date.now() - lastOrderCheck < ORDER_POLL_MS) return;
+  lastOrderCheck = Date.now();
+  saveState();
+  try {
+    await syncOrders();
+  } catch (error) {
+    log(`訂單檢查錯誤：${error.message}`);
+  }
+}
+
+const state = readJson(STATE_FILE, {});
+let sentIds = new Set(state.sentIds || []);
+let seenOrders = new Set(state.seenOrders || []);
+let lastOrderCheck = Number(state.lastOrderCheck || 0);
+
+function saveState() {
+  sentIds = new Set([...sentIds].slice(-MAX_REMEMBERED_IDS));
+  seenOrders = new Set([...seenOrders].slice(-MAX_REMEMBERED_IDS));
+  writeJson(STATE_FILE, { sentIds: [...sentIds], seenOrders: [...seenOrders], lastOrderCheck });
+}
 
 function rememberSent(ids) {
   ids.forEach((id) => sentIds.add(id));
-  const list = [...sentIds].slice(-MAX_REMEMBERED_IDS);
-  sentIds = new Set(list);
-  writeJson(STATE_FILE, { sentIds: list });
+  saveState();
 }
 
 async function syncOnce() {
@@ -185,15 +346,17 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--set-secret")) return setSecret();
   if (args.includes("--once")) return syncOnce();
+  if (args.includes("--orders")) return syncOrders();
 
-  log(`常駐同步啟動（每 ${POLL_MS / 1000} 秒檢查一次）`);
+  log(`常駐同步啟動（聊天每 ${POLL_MS / 1000} 秒、訂單每 ${ORDER_POLL_MS / 60000} 分鐘檢查一次）`);
   for (;;) {
     try {
       await syncOnce();
     } catch (error) {
       log(`同步錯誤：${error.message}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    await maybeSyncOrders();
+    await sleep(POLL_MS);
   }
 }
 
