@@ -80,6 +80,7 @@ node -e "const b=require('bcryptjs'); console.log(b.hashSync('你的密碼', 12)
 3. 第一次設定密鑰：`node "C:\Users\rsz97\Order number\tools\taobao-desktop-sync.mjs" --set-secret`
 4. 密鑰、已送出紀錄、日誌存在 `%LOCALAPPDATA%\order-number-taobao-sync\`（不進 git）
 5. 每 60 分鐘讀一次淘寶「待收貨」訂單，有快遞單號的新訂單自動加到件主「鈞」名下（備註＝商品名前 20 字），排除集運站自己的訂單與虛擬商品；`--orders` 可立即檢查一次
+6. 1688：工作排程器 `Order1688Chrome` 開一個同步專用 Chrome（`--remote-debugging-port=9334`，設定檔在 `%LOCALAPPDATA%\order-number-taobao-sync\chrome-1688`），在裡面登入 1688 一次；每 60 分鐘在背景分頁讀「待收货」訂單與物流單號，一樣加到「鈞」名下
 
 ### API 健康檢查
 

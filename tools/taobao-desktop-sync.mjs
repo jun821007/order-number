@@ -4,7 +4,7 @@
 // 用法：
 //   node taobao-desktop-sync.mjs --set-secret   設定 INBOX_SECRET（存在本機，不進 git）
 //   node taobao-desktop-sync.mjs --once         只同步一次並印出結果
-//   node taobao-desktop-sync.mjs --orders       立即檢查一次淘寶已發貨訂單，新單號加到件主名下
+//   node taobao-desktop-sync.mjs --orders       立即檢查一次淘寶與 1688 已發貨訂單，新單號加到件主名下
 //   node taobao-desktop-sync.mjs                常駐，每隔 POLL_MS 同步一次
 
 import fs from "node:fs";
@@ -19,6 +19,9 @@ const ORDER_POLL_MS = Number(process.env.TAOBAO_ORDER_POLL_MS || 60 * 60 * 1000)
 const ORDER_OWNER = process.env.TAOBAO_ORDER_OWNER || "鈞";
 const EXCLUDED_SELLERS = new Set((process.env.TAOBAO_EXCLUDED_SELLERS || "jiejie1378918").split(",").map((s) => s.trim()).filter(Boolean));
 const ORDER_RETRY_MS = 5 * 60 * 1000;
+const CHROME_1688_PORT = Number(process.env.CHROME_1688_DEBUG_PORT || 9334);
+const ORDER_1688_LIST_URL = "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&pageSize=10";
+const ORDER_1688_MAX_PAGES = 3;
 const ORDER_MAX_PAGES = 5;
 const ORDER_DETAIL_DELAY_MS = 1500;
 const REMARK_MAX_CHARS = 20;
@@ -240,8 +243,8 @@ async function syncOrders() {
   const orders = (await fetchShippedOrders(wsUrl))
     .filter((order) => !seenOrders.has(order.id) && !EXCLUDED_SELLERS.has(order.seller));
   if (!orders.length) {
-    log("訂單檢查完成｜沒有新發貨的訂單");
-    return;
+    log("淘寶訂單檢查完成｜沒有新發貨的訂單");
+    return true;
   }
 
   const parcels = [];
@@ -258,31 +261,190 @@ async function syncOrders() {
     }
   }
 
+  return submitParcels("淘寶", parcels, resolvedOrderIds, secret);
+}
+
+async function submitParcels(label, parcels, resolvedOrderIds, secret) {
   if (parcels.length) {
     try {
       const result = await postToBackend("/api/inbox/orders", { owner: ORDER_OWNER, orders: parcels }, secret);
-      log(`訂單檢查完成｜新增單號 ${result.added || 0} 筆，已存在 ${result.existing || 0} 筆`);
+      log(`${label}訂單檢查完成｜新增單號 ${result.added || 0} 筆，已存在 ${result.existing || 0} 筆`);
     } catch (error) {
       if (error.code === "OWNER_NOT_FOUND") log(`單號分類工具裡找不到件主「${ORDER_OWNER}」`);
       else if (error.status === 401) log("密鑰錯誤：請執行 node taobao-desktop-sync.mjs --set-secret");
-      else log(`送出訂單失敗：${error.message}${error.cause ? ` (${error.cause.code || error.cause.message})` : ""}`);
+      else log(`${label}送出訂單失敗：${error.message}${error.cause ? ` (${error.cause.code || error.cause.message})` : ""}`);
       return false;
     }
   } else {
-    log(`訂單檢查完成｜${resolvedOrderIds.length} 筆新訂單都沒有快遞單號（虛擬商品）`);
+    log(`${label}訂單檢查完成｜${resolvedOrderIds.length} 筆新訂單都沒有快遞單號`);
   }
 
   resolvedOrderIds.forEach((id) => seenOrders.add(id));
   saveState();
+  return true;
+}
+
+// 1688 runs in a dedicated Chrome profile (Chrome, unlike the Taobao app, can open background tabs over CDP).
+class ChromeSession {
+  static async open(url) {
+    const version = await (await fetch(`http://127.0.0.1:${CHROME_1688_PORT}/json/version`, { signal: AbortSignal.timeout(5000) })).json();
+    const session = new ChromeSession(new WebSocket(version.webSocketDebuggerUrl));
+    await new Promise((resolve, reject) => {
+      session.ws.addEventListener("open", resolve, { once: true });
+      session.ws.addEventListener("error", () => reject(new Error("Chrome 連線失敗")), { once: true });
+    });
+    const created = await session.send("Target.createTarget", { url, background: true });
+    session.targetId = created.targetId;
+    session.sessionId = (await session.send("Target.attachToTarget", { targetId: session.targetId, flatten: true })).sessionId;
+    return session;
+  }
+
+  constructor(ws) {
+    this.ws = ws;
+    this.nextId = 1;
+    this.pending = new Map();
+    ws.addEventListener("message", (event) => {
+      const msg = JSON.parse(event.data);
+      const handler = msg.id && this.pending.get(msg.id);
+      if (!handler) return;
+      this.pending.delete(msg.id);
+      if (msg.error) handler.reject(new Error(msg.error.message));
+      else handler.resolve(msg.result);
+    });
+  }
+
+  send(method, params = {}, sessionId) {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Chrome 逾時：${method}`));
+      }, 30000);
+      this.pending.set(id, {
+        resolve: (value) => { clearTimeout(timer); resolve(value); },
+        reject: (error) => { clearTimeout(timer); reject(error); }
+      });
+      this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    });
+  }
+
+  async evaluate(expression) {
+    const result = await this.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, this.sessionId);
+    if (result.exceptionDetails) throw new Error("1688 頁面執行失敗");
+    return result.result.value;
+  }
+
+  async close() {
+    try {
+      if (this.targetId) await this.send("Target.closeTarget", { targetId: this.targetId });
+    } catch {
+      // tab may already be gone
+    }
+    this.ws.close();
+  }
+}
+
+async function mtop1688(session, api, data) {
+  const raw = await session.evaluate(`new Promise((resolve) => {
+    if (!window.lib || !window.lib.mtop) return resolve(JSON.stringify({ err: "NO_MTOP" }));
+    window.lib.mtop.request({ api: ${JSON.stringify(api)}, v: "1.0", ecode: 1, type: "GET", dataType: "json", valueType: "string", timeout: 15000, data: ${JSON.stringify(data)} })
+      .then((r) => resolve(JSON.stringify({ ok: r })))
+      .catch((e) => resolve(JSON.stringify({ err: e })));
+  })`);
+  const result = JSON.parse(raw);
+  if (result.err) {
+    const ret = Array.isArray(result.err?.ret) ? result.err.ret.join(",") : JSON.stringify(result.err);
+    throw new Error(`1688 介面錯誤 ${api}：${ret}`);
+  }
+  return result.ok;
+}
+
+async function waitFor1688Page(session) {
+  for (let i = 0; i < 30; i++) {
+    await sleep(1000);
+    const state = JSON.parse(await session.evaluate(`JSON.stringify({ host: location.host, ready: !!(window.lib && window.lib.mtop) })`));
+    if (/login/i.test(state.host)) return "LOGGED_OUT";
+    if (state.ready) return "READY";
+  }
+  return "TIMEOUT";
+}
+
+async function sync1688Orders() {
+  const secret = getSecret();
+  if (!secret) return;
+
+  let session;
+  try {
+    session = await ChromeSession.open(ORDER_1688_LIST_URL);
+  } catch {
+    log("略過 1688：同步專用 Chrome 沒有開（點桌面「淘寶同步」捷徑或重新登入 Windows）");
+    return false;
+  }
+
+  try {
+    const pageState = await waitFor1688Page(session);
+    if (pageState === "LOGGED_OUT") {
+      log("1688 已登出：請在同步專用 Chrome 重新登入 1688");
+      return false;
+    }
+    if (pageState !== "READY") {
+      log("1688 訂單頁載入逾時");
+      return false;
+    }
+
+    const orders = [];
+    for (let page = 1; page <= ORDER_1688_MAX_PAGES; page++) {
+      const res = await mtop1688(session, "mtop.1688.trading.dataline.service", {
+        serviceId: "OrderListDataLineService.buyerOrderList",
+        param: JSON.stringify({ page, pageSize: 20 })
+      });
+      const payload = res.data?.data?.result ?? res.data?.result;
+      const list = typeof payload === "string" ? JSON.parse(payload) : payload;
+      const rows = list?.data?.data || [];
+      rows.forEach((row) => orders.push({
+        id: `1688:${row.idStr || row.id}`,
+        orderId: String(row.idStr || row.id),
+        status: row.status,
+        titles: (row.orderEntries || []).map((entry) => entry.productName || "").filter(Boolean)
+      }));
+      if (page >= Number(list?.data?.pages || 1)) break;
+      await sleep(ORDER_DETAIL_DELAY_MS);
+    }
+
+    const fresh = orders.filter((order) => order.status === "waitbuyerreceive" && !seenOrders.has(order.id));
+    if (!fresh.length) {
+      log("1688 訂單檢查完成｜沒有新發貨的訂單");
+      return true;
+    }
+
+    const trace = await mtop1688(session, "mtop.1688.MtopLgtTraceService.queryTrace", { orderIds: fresh.map((o) => o.orderId).join(",") });
+    const traceResult = typeof trace.data?.result === "string" ? JSON.parse(trace.data.result) : trace.data?.result;
+    const traceByOrder = new Map((traceResult || []).map((item) => [String(item.orderId), item.trace || []]));
+    const parcels = [];
+    const resolved = [];
+    // Unlike Taobao, 1688 has no virtual goods here: an order without a number is just not traced yet, so retry later.
+    fresh.forEach((order) => {
+      const numbers = [...new Set((traceByOrder.get(order.orderId) || []).map((t) => t.mailNo).filter(Boolean))];
+      if (!numbers.length) return;
+      numbers.forEach((tracking) => parcels.push({ tracking, remark: shortRemark(order.titles), order_id: order.orderId }));
+      resolved.push(order.id);
+    });
+    return submitParcels("1688 ", parcels, resolved, secret);
+  } finally {
+    await session.close();
+  }
 }
 
 async function maybeSyncOrders() {
   if (Date.now() - lastOrderCheck < ORDER_POLL_MS) return;
-  let ok = false;
-  try {
-    ok = (await syncOrders()) !== false;
-  } catch (error) {
-    log(`訂單檢查錯誤：${error.message}`);
+  let ok = true;
+  for (const job of [syncOrders, sync1688Orders]) {
+    try {
+      if ((await job()) === false) ok = false;
+    } catch (error) {
+      ok = false;
+      log(`訂單檢查錯誤：${error.message}`);
+    }
   }
   lastOrderCheck = ok ? Date.now() : Date.now() - ORDER_POLL_MS + ORDER_RETRY_MS;
   saveState();
@@ -348,7 +510,11 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--set-secret")) return setSecret();
   if (args.includes("--once")) return syncOnce();
-  if (args.includes("--orders")) return syncOrders();
+  if (args.includes("--orders")) {
+    await syncOrders();
+    await sync1688Orders();
+    return;
+  }
 
   log(`常駐同步啟動（聊天每 ${POLL_MS / 1000} 秒、訂單每 ${ORDER_POLL_MS / 60000} 分鐘檢查一次）`);
   for (;;) {
