@@ -18,6 +18,7 @@ const POLL_MS = Number(process.env.TAOBAO_POLL_MS || 15000);
 const ORDER_POLL_MS = Number(process.env.TAOBAO_ORDER_POLL_MS || 60 * 60 * 1000);
 const ORDER_OWNER = process.env.TAOBAO_ORDER_OWNER || "鈞";
 const EXCLUDED_SELLERS = new Set((process.env.TAOBAO_EXCLUDED_SELLERS || "jiejie1378918").split(",").map((s) => s.trim()).filter(Boolean));
+const ORDER_RETRY_MS = 5 * 60 * 1000;
 const ORDER_MAX_PAGES = 5;
 const ORDER_DETAIL_DELAY_MS = 1500;
 const REMARK_MAX_CHARS = 20;
@@ -232,7 +233,7 @@ async function syncOrders() {
   const found = await findChatPage();
   if (found.error) {
     log("略過訂單檢查：淘寶桌面版沒有開或沒登入");
-    return;
+    return false;
   }
   const wsUrl = found.page.webSocketDebuggerUrl;
 
@@ -264,8 +265,8 @@ async function syncOrders() {
     } catch (error) {
       if (error.code === "OWNER_NOT_FOUND") log(`單號分類工具裡找不到件主「${ORDER_OWNER}」`);
       else if (error.status === 401) log("密鑰錯誤：請執行 node taobao-desktop-sync.mjs --set-secret");
-      else log(`送出訂單失敗：${error.message}`);
-      return;
+      else log(`送出訂單失敗：${error.message}${error.cause ? ` (${error.cause.code || error.cause.message})` : ""}`);
+      return false;
     }
   } else {
     log(`訂單檢查完成｜${resolvedOrderIds.length} 筆新訂單都沒有快遞單號（虛擬商品）`);
@@ -277,13 +278,14 @@ async function syncOrders() {
 
 async function maybeSyncOrders() {
   if (Date.now() - lastOrderCheck < ORDER_POLL_MS) return;
-  lastOrderCheck = Date.now();
-  saveState();
+  let ok = false;
   try {
-    await syncOrders();
+    ok = (await syncOrders()) !== false;
   } catch (error) {
     log(`訂單檢查錯誤：${error.message}`);
   }
+  lastOrderCheck = ok ? Date.now() : Date.now() - ORDER_POLL_MS + ORDER_RETRY_MS;
+  saveState();
 }
 
 const state = readJson(STATE_FILE, {});
