@@ -2095,7 +2095,7 @@ function markSelectedShipped() {
 }
 
 function promptShipmentDetails(defaults = {}) {
-  const trackingTaiwanRaw = prompt("輸入台灣單號（可留空，之後可在此單修改）：") || "";
+  const trackingTaiwanRaw = prompt("輸入台灣單號（可留空，之後可在此單修改）：", defaults.taiwanTracking || "") || "";
   const taiwanTrackingId = normalizeTaiwanTrackingInput(trackingTaiwanRaw);
 
   const existingGroup = state.data.taiwan_parcel_groups.find((g) => g.tracking_id_taiwan === taiwanTrackingId);
@@ -2221,7 +2221,7 @@ function confirmPendingShipment(pending) {
   if (alreadyShipped.length) notes.push(`已出轉運：${alreadyShipped.join("、")}`);
   if (notes.length && !confirm(`${notes.join("\n")}\n\n其餘 ${targets.length} 筆照常出貨？`)) return;
 
-  const details = promptShipmentDetails({ address: pending.address, cny: pending.cny });
+  const details = promptShipmentDetails({ address: pending.address, cny: pending.cny, taiwanTracking: pending.taiwan_tracking });
   if (!details) return;
 
   targets.forEach(({ parcel, weight }) => {
@@ -2267,7 +2267,7 @@ function renderInbox() {
 
     const meta = document.createElement("div");
     meta.className = "inbox-pending-meta";
-    meta.textContent = `合計 ${item.total_weight ?? "-"}kg｜人民幣 ${item.cny ?? "未抓到"}｜地址：${item.address || "未抓到"}`;
+    meta.textContent = `合計 ${item.total_weight ?? "-"}kg｜人民幣 ${item.cny ?? "未抓到"}｜地址：${item.address || "未抓到"}｜台灣單號：${item.taiwan_tracking || "還沒收到"}`;
 
     const actions = document.createElement("div");
     actions.className = "button-row wrap";

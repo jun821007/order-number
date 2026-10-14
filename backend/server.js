@@ -622,6 +622,8 @@ const INBOX_WEIGHT_LINE = /^(\d+(?:\.\d+)?)\s*(?:kg|公斤)?\s+([A-Za-z0-9]{6,})
 const INBOX_PAY_LINE = /^拍\s*[:：]?\s*(\d+(?:\.\d+)?)/;
 const INBOX_TOTAL_LINE = /^(?:合计|合計)\s*[:：]?\s*(\d+(?:\.\d+)?)/;
 const INBOX_PHONE = /09\d{8}/;
+const INBOX_TAIWAN_LINE = /^(?:台[湾灣])?(?:单号|單號)?\s*[:：]?\s*(\d{9,14})$/;
+const INBOX_TAIWAN_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 function requireInboxSecret(req, res, next) {
   if (!INBOX_SECRET) return res.status(503).json({ ok: false, error: "INBOX_SECRET_NOT_CONFIGURED" });
@@ -671,6 +673,8 @@ function parseTaobaoTime(ts) {
 
 function parseInboxMessage(text) {
   const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const taiwanMatch = lines.length === 1 ? lines[0].match(INBOX_TAIWAN_LINE) : null;
+  if (taiwanMatch) return { type: "taiwan", items: [], cny: null, totalWeight: null, address: "", taiwanTracking: taiwanMatch[1] };
   const items = [];
   const otherLines = [];
   let cny = null;
@@ -751,6 +755,30 @@ function applyInboundToData(data, items, nowIso) {
   return { updated, missing, skipped };
 }
 
+// The forwarder sends the Taiwan number after payment, either before or after the shipment is confirmed in the app.
+function assignTaiwanTracking(data, inbox, tracking, messageAt) {
+  if (data.taiwan_parcel_groups.some((group) => (group.tracking_id_taiwan || "").trim() === tracking)) return "duplicate";
+  if (inbox.pending.some((pending) => pending.taiwan_tracking === tracking)) return "duplicate";
+
+  const pending = [...inbox.pending].reverse().find((p) => !p.taiwan_tracking
+    && messageAt - parseTaobaoTime(p.message_ts) >= 0
+    && messageAt - parseTaobaoTime(p.message_ts) <= INBOX_TAIWAN_WINDOW_MS);
+  if (pending) {
+    pending.taiwan_tracking = tracking;
+    return "pending";
+  }
+
+  const group = data.taiwan_parcel_groups
+    .filter((g) => (g.tracking_id_taiwan || "").startsWith(UNSET_TAIWAN_PREFIX))
+    .filter((g) => Math.abs(messageAt - Date.parse(g.created_at || "")) <= INBOX_TAIWAN_WINDOW_MS)
+    .sort((a, b) => Date.parse(b.created_at || "") - Date.parse(a.created_at || ""))[0];
+  if (group) {
+    group.tracking_id_taiwan = tracking;
+    return "group";
+  }
+  return "none";
+}
+
 async function processInboxMessages(messages) {
   return withWriteLock(async () => {
     const inbox = await readInbox();
@@ -760,7 +788,7 @@ async function processInboxMessages(messages) {
       .filter((message) => !processedSet.has(message.hash))
       .sort((a, b) => parseTaobaoTime(a.ts) - parseTaobaoTime(b.ts));
 
-    const summary = { received: messages.length, fresh: fresh.length, inbound: 0, quotes: 0, addresses: 0 };
+    const summary = { received: messages.length, fresh: fresh.length, inbound: 0, quotes: 0, addresses: 0, taiwan: 0 };
     if (!fresh.length) return summary;
 
     let data = null;
@@ -809,6 +837,17 @@ async function processInboxMessages(messages) {
           target.address = parsed.address;
           summary.addresses += 1;
         }
+      } else if (parsed.type === "taiwan" && !message.self) {
+        data = data || await readDataFile();
+        const result = assignTaiwanTracking(data, inbox, parsed.taiwanTracking, messageAt);
+        if (result === "group") dataChanged = true;
+        if (result === "group" || result === "pending") summary.taiwan += 1;
+        const text = {
+          group: `台灣單號 ${parsed.taiwanTracking} 已自動填入最近一筆未填單號的出貨`,
+          pending: `台灣單號 ${parsed.taiwanTracking} 已記到待確認出貨，確認時會自動帶入`,
+          none: `收到台灣單號 ${parsed.taiwanTracking}，但找不到 3 天內未填單號的出貨，請手動填入`
+        }[result];
+        if (text) inbox.log.push({ at: nowIso, message_ts: message.ts, type: "taiwan", text });
       }
 
       inbox.processed.push(message.hash);
@@ -829,7 +868,7 @@ app.post("/api/inbox/messages", requireInboxSecret, async (req, res) => {
   const messages = raw
     .slice(0, 500)
     .filter((m) => m && typeof m.id === "string" && typeof m.text === "string")
-    .map((m) => ({ id: m.id.slice(0, 6000), ts: String(m.ts || ""), sender: String(m.sender || ""), text: m.text.slice(0, 5000) }));
+    .map((m) => ({ id: m.id.slice(0, 6000), ts: String(m.ts || ""), sender: String(m.sender || ""), self: m.self === true, text: m.text.slice(0, 5000) }));
   try {
     const summary = await processInboxMessages(messages);
     return res.json({ ok: true, ...summary });

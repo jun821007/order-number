@@ -489,7 +489,7 @@ async function syncOnce() {
     return;
   }
 
-  const messages = snapshot.messages.map((m) => ({ id: `${m.ts}|${m.text}`, ts: m.ts, sender: m.sender, text: m.text }));
+  const messages = snapshot.messages.map((m) => ({ id: `${m.ts}|${m.text}`, ts: m.ts, sender: m.sender, self: m.self, text: m.text }));
   const unsent = messages.filter((m) => !sentIds.has(m.id));
   if (!unsent.length) {
     log(`運作中｜畫面 ${messages.length} 則，沒有新訊息`);
@@ -499,7 +499,7 @@ async function syncOnce() {
   try {
     const result = await postMessages(unsent, secret);
     rememberSent(unsent.map((m) => m.id));
-    log(`送出 ${unsent.length} 則｜入庫 ${result.inbound || 0}、待出貨 ${result.quotes || 0}`);
+    log(`送出 ${unsent.length} 則｜入庫 ${result.inbound || 0}、待出貨 ${result.quotes || 0}、台灣單號 ${result.taiwan || 0}`);
   } catch (error) {
     if (error.status === 401) log("密鑰錯誤：請執行 node taobao-desktop-sync.mjs --set-secret");
     else log(`送出失敗：${error.message}`);
