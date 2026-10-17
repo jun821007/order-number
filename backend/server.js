@@ -647,10 +647,11 @@ async function readInbox() {
       pending: Array.isArray(parsed.pending) ? parsed.pending : [],
       log: Array.isArray(parsed.log) ? parsed.log : [],
       sync: parsed.sync && typeof parsed.sync === "object" ? parsed.sync : null,
-      syncWechat: parsed.syncWechat && typeof parsed.syncWechat === "object" ? parsed.syncWechat : null
+      syncWechat: parsed.syncWechat && typeof parsed.syncWechat === "object" ? parsed.syncWechat : null,
+      syncLine: parsed.syncLine && typeof parsed.syncLine === "object" ? parsed.syncLine : null
     };
   } catch {
-    return { processed: [], pending: [], log: [], sync: null, syncWechat: null };
+    return { processed: [], pending: [], log: [], sync: null, syncWechat: null, syncLine: null };
   }
 }
 
@@ -662,6 +663,7 @@ async function writeInbox(inbox) {
   };
   if (inbox.sync && typeof inbox.sync === "object") next.sync = inbox.sync;
   if (inbox.syncWechat && typeof inbox.syncWechat === "object") next.syncWechat = inbox.syncWechat;
+  if (inbox.syncLine && typeof inbox.syncLine === "object") next.syncLine = inbox.syncLine;
   const filePath = inboxFilePath();
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(`${filePath}.tmp`, JSON.stringify(next, null, 2), "utf8");
@@ -992,9 +994,19 @@ app.post("/api/inbox/heartbeat", requireInboxSecret, async (req, res) => {
   const ok = req.body?.ok !== false;
   const detail = String(req.body?.detail || "").trim().slice(0, 200);
   const conversation = String(req.body?.conversation || "").trim().slice(0, 100);
-  const channel = req.body?.channel === "wechat" ? "wechat" : "taobao";
-  const field = channel === "wechat" ? "syncWechat" : "sync";
-  const name = channel === "wechat" ? "微信" : "淘寶";
+  const rawChannel = String(req.body?.channel || "").trim().toLowerCase();
+  let channel = "taobao";
+  let field = "sync";
+  let name = "淘寶";
+  if (rawChannel === "wechat") {
+    channel = "wechat";
+    field = "syncWechat";
+    name = "微信";
+  } else if (rawChannel === "line") {
+    channel = "line";
+    field = "syncLine";
+    name = "LINE記事本";
+  }
   try {
     const sync = await withWriteLock(async () => {
       const inbox = await readInbox();
@@ -1030,7 +1042,18 @@ async function handleInboundLabels(req, res) {
 app.post("/api/inbox/labels", requireInboxSecret, handleInboundLabels);
 app.post("/api/order-tool/inbound-labels", requireAppAuth, handleInboundLabels);
 
-async function addTaobaoOrders(ownerName, orders) {
+function normalizeOrderSource(raw) {
+  const source = String(raw || "").trim().replace(/[\r\n]+/g, " ").slice(0, 40);
+  return source || "taobao";
+}
+
+function orderSourceLogPrefix(source) {
+  if (source === "taobao") return "淘寶訂單自動新增";
+  if (source === "line-notebook") return "LINE記事本自動新增";
+  return source;
+}
+
+async function addTaobaoOrders(ownerName, orders, source = "taobao") {
   return withWriteLock(async () => {
     const data = await readDataFile();
     const owner = data.friends.find((friend) => (friend.name || "").trim() === ownerName);
@@ -1072,7 +1095,7 @@ async function addTaobaoOrders(ownerName, orders) {
         at: nowIso,
         message_ts: "",
         type: "orders",
-        text: `淘寶訂單自動新增 ${added.length} 筆（${ownerName}）：${added.map((a) => `${a.tracking} ${a.remark}`.trim()).join("、")}`
+        text: `${orderSourceLogPrefix(source)} ${added.length} 筆（${ownerName}）：${added.map((a) => `${a.tracking} ${a.remark}`.trim()).join("、")}`
       });
       await writeInbox(inbox);
     }
@@ -1084,12 +1107,13 @@ app.post("/api/inbox/orders", requireInboxSecret, async (req, res) => {
   const ownerName = String(req.body?.owner || "").trim();
   const raw = Array.isArray(req.body?.orders) ? req.body.orders : null;
   if (!ownerName || !raw) return res.status(400).json({ ok: false, error: "INVALID_PAYLOAD" });
+  const source = normalizeOrderSource(req.body?.source);
   const orders = raw
     .slice(0, 300)
     .map((o) => ({ tracking: String(o?.tracking || "").trim(), remark: String(o?.remark || "").trim().slice(0, 100) }))
     .filter((o) => /^[A-Za-z0-9]{6,40}$/.test(o.tracking));
   try {
-    const result = await addTaobaoOrders(ownerName, orders);
+    const result = await addTaobaoOrders(ownerName, orders, source);
     if (result.ownerMissing) return res.status(404).json({ ok: false, error: "OWNER_NOT_FOUND" });
     return res.json({ ok: true, ...result });
   } catch (error) {
@@ -1106,7 +1130,8 @@ app.get("/api/inbox/state", requireAppAuth, async (_req, res) => {
       pending: inbox.pending,
       log: inbox.log.slice(-20),
       sync: buildSyncStatus(inbox.sync, "淘寶"),
-      syncWechat: buildSyncStatus(inbox.syncWechat, "微信")
+      syncWechat: buildSyncStatus(inbox.syncWechat, "微信"),
+      syncLine: buildSyncStatus(inbox.syncLine, "LINE記事本")
     });
   } catch (error) {
     console.error(error);

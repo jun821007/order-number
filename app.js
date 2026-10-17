@@ -80,6 +80,7 @@ const els = {
   inboxSyncDetail: document.getElementById("inboxSyncDetail"),
   taobaoSyncStatus: document.getElementById("taobaoSyncStatus"),
   wechatSyncStatus: document.getElementById("wechatSyncStatus"),
+  lineSyncStatus: document.getElementById("lineSyncStatus"),
   wechatCardSyncStatus: document.getElementById("wechatCardSyncStatus"),
   wechatLabelFiles: document.getElementById("wechatLabelFiles"),
   wechatLabelText: document.getElementById("wechatLabelText"),
@@ -105,7 +106,7 @@ const state = {
   saving: false,
   syncing: false,
   pendingSyncRender: false,
-  inbox: { pending: [], log: [], sync: null, syncWechat: null },
+  inbox: { pending: [], log: [], sync: null, syncWechat: null, syncLine: null },
   wechatDetectedTrackings: [],
   shippedCollapsed: true,
   friendListCollapsed: true,
@@ -2203,7 +2204,8 @@ async function fetchInboxState() {
       pending: json.pending || [],
       log: json.log || [],
       sync: json.sync || { state: "offline", label: "淘寶同步未連線" },
-      syncWechat: json.syncWechat || { state: "offline", label: "微信同步未連線" }
+      syncWechat: json.syncWechat || { state: "offline", label: "微信同步未連線" },
+      syncLine: json.syncLine || { state: "offline", label: "LINE記事本同步未連線" }
     };
     renderInbox();
   } catch (error) {
@@ -2375,13 +2377,14 @@ function confirmPendingShipment(pending) {
 
 function renderInbox() {
   if (!els.inboxCard) return;
-  const { pending, log, sync, syncWechat } = state.inbox;
+  const { pending, log, sync, syncWechat, syncLine } = state.inbox;
   const hasSyncInfo = Boolean(sync?.lastHeartbeatAt || sync?.state || log.length);
   els.inboxCard.classList.toggle("hidden", !pending.length && !log.length && !hasSyncInfo);
   applySyncPill(els.taobaoSyncStatus, sync);
   applySyncPill(els.inboxSyncStatus, sync);
   applySyncPill(els.wechatSyncStatus, syncWechat || { state: "offline", label: "微信同步未連線" });
   applySyncPill(els.wechatCardSyncStatus, syncWechat || { state: "offline", label: "微信同步未連線" });
+  applySyncPill(els.lineSyncStatus, syncLine || { state: "offline", label: "LINE記事本同步未連線" });
   if (els.inboxSyncDetail) {
     const parts = [];
     if (sync?.detail) parts.push(sync.detail);
