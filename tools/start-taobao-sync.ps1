@@ -69,7 +69,7 @@ if (-not $task) {
     Write-Host "[3/4] 背景同步已啟動" -ForegroundColor Green
 }
 
-Write-Host "[4/4] 請在淘寶點開「消息」→「捷豹國際集運站」對話；淘寶和 1688 的 Chrome 都可縮小但不要關閉。"
+Write-Host "[4/4] 背景同步會自動重開關掉的淘寶並進「捷豹國際集運站」；淘寶和 1688 Chrome 可縮小。"
 Start-Sleep -Seconds 4
 if (Test-Path $logFile) {
     Write-Host ""

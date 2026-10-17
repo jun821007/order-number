@@ -76,7 +76,8 @@ node -e "const b=require('bcryptjs'); console.log(b.hashSync('你的密碼', 12)
 `tools/taobao-desktop-sync.mjs` 透過除錯埠讀淘寶桌面版的聊天頁，只處理「捷豹國際集運站」對話。
 
 1. 工作排程器 `TaobaoDesktopDebug`：登入 Windows 時以 `--remote-debugging-port=9333` 啟動淘寶桌面版
-2. 工作排程器 `OrderNumberTaobaoSync`：登入後 1 分鐘在背景執行同步程式，每 15 秒檢查一次
+2. 工作排程器 `OrderNumberEnsureTaobao`：同步程式偵測到淘寶關掉時，在桌面工作階段重開（`tools/ensure-taobao-chat.ps1`），並自動打開消息、點進捷豹對話
+3. 工作排程器 `OrderNumberTaobaoSync`：登入後 1 分鐘在背景執行同步程式，每 15 秒檢查一次
 3. 第一次設定密鑰：`node "C:\Users\rsz97\Order number\tools\taobao-desktop-sync.mjs" --set-secret`
 4. 密鑰、已送出紀錄、日誌存在 `%LOCALAPPDATA%\order-number-taobao-sync\`（不進 git）
 5. 每 60 分鐘讀一次淘寶「待收貨」訂單，有快遞單號的新訂單自動加到件主「鈞」名下（備註＝商品名前 20 字），排除集運站自己的訂單與虛擬商品；`--orders` 可立即檢查一次

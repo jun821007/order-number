@@ -10,10 +10,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const BACKEND_URL = process.env.ORDER_TOOL_BACKEND_URL || "https://order-number-production.up.railway.app";
 const DEBUG_PORT = Number(process.env.TAOBAO_DEBUG_PORT || 9333);
 const TARGET_CONVERSATION = process.env.TAOBAO_TARGET_CONVERSATION || "捷豹國際集運站";
+const CHAT_URL = process.env.TAOBAO_CHAT_URL || "https://market.m.taobao.com/app/im/chat-core/index.html#/";
+const ENSURE_TASK_NAME = process.env.TAOBAO_ENSURE_TASK || "OrderNumberEnsureTaobao";
+const RELAUNCH_COOLDOWN_MS = Number(process.env.TAOBAO_RELAUNCH_COOLDOWN_MS || 2 * 60 * 1000);
 const POLL_MS = Number(process.env.TAOBAO_POLL_MS || 15000);
 const ORDER_POLL_MS = Number(process.env.TAOBAO_ORDER_POLL_MS || 60 * 60 * 1000);
 const ORDER_OWNER = process.env.TAOBAO_ORDER_OWNER || "鈞";
@@ -95,16 +102,149 @@ const EXTRACT_EXPRESSION = `(() => {
   return JSON.stringify({ active: activeEl ? activeEl.innerText.trim() : null, messages });
 })()`;
 
+async function listDebugPages() {
+  const res = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`, { signal: AbortSignal.timeout(5000) });
+  return res.json();
+}
+
 async function findChatPage() {
   let targets;
   try {
-    const res = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`, { signal: AbortSignal.timeout(5000) });
-    targets = await res.json();
+    targets = await listDebugPages();
   } catch {
     return { error: "TAOBAO_NOT_RUNNING" };
   }
   const page = targets.find((t) => t.type === "page" && t.url.includes("/app/im/"));
   return page ? { page } : { error: "CHAT_NOT_OPEN" };
+}
+
+let lastRelaunchAt = 0;
+
+async function relaunchTaobaoDesktop() {
+  const now = Date.now();
+  if (now - lastRelaunchAt < RELAUNCH_COOLDOWN_MS) {
+    log("淘寶桌面版剛重開過，稍後再試");
+    return false;
+  }
+  lastRelaunchAt = now;
+  log("淘寶桌面版已關閉或不是同步模式，正在自動重開…");
+  try {
+    await execFileAsync("schtasks.exe", ["/Run", "/TN", ENSURE_TASK_NAME], { windowsHide: true });
+    log(`已觸發重開排程 ${ENSURE_TASK_NAME}`);
+  } catch (error) {
+    log(`自動重開失敗：${error.message}`);
+    return false;
+  }
+  for (let i = 0; i < 50; i++) {
+    await sleep(1000);
+    try {
+      await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`, { signal: AbortSignal.timeout(2000) });
+      log("淘寶桌面版已重新開啟（同步模式）");
+      return true;
+    } catch {
+      // keep waiting
+    }
+  }
+  log("自動重開逾時：請手動點桌面「淘寶同步」捷徑");
+  return false;
+}
+
+function cdpCall(wsUrl, method, params = {}, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error(`DevTools 逾時：${method}`));
+    }, timeoutMs);
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ id: 1, method, params }));
+    });
+    ws.addEventListener("message", (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.id !== 1) return;
+      clearTimeout(timer);
+      ws.close();
+      if (msg.error) reject(new Error(msg.error.message || method));
+      else resolve(msg.result);
+    });
+    ws.addEventListener("error", () => {
+      clearTimeout(timer);
+      reject(new Error("DevTools 連線失敗"));
+    });
+  });
+}
+
+async function openChatPageViaNavigate() {
+  const targets = await listDebugPages();
+  const candidate = targets.find((t) => t.type === "page" && /^https?:/i.test(t.url) && !t.url.includes("/app/im/"))
+    || targets.find((t) => t.type === "page" && t.url === "about:blank");
+  if (!candidate?.webSocketDebuggerUrl) return false;
+  await cdpCall(candidate.webSocketDebuggerUrl, "Page.navigate", { url: CHAT_URL });
+  for (let i = 0; i < 20; i++) {
+    await sleep(1000);
+    const found = await findChatPage();
+    if (found.page) return true;
+  }
+  return false;
+}
+
+async function selectTargetConversation(wsUrl) {
+  const expression = `(() => {
+    const target = ${JSON.stringify(TARGET_CONVERSATION)};
+    const items = [...document.querySelectorAll(".conversation-item")];
+    const names = items.map((el) => (el.querySelector(".name")?.innerText || "").trim()).filter(Boolean);
+    if (!names.length) return JSON.stringify({ ok: false, loading: true, names: [] });
+    const hit = items.find((el) => (el.querySelector(".name")?.innerText || "").trim() === target);
+    if (!hit) return JSON.stringify({ ok: false, loading: false, names: names.slice(0, 30) });
+    hit.click();
+    const active = document.querySelector(".conversation-item.active .name")?.innerText?.trim() || null;
+    return JSON.stringify({ ok: active === target, active, loading: false });
+  })()`;
+  // Chat list often loads a few seconds after the page appears.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const raw = await evaluateInPage(wsUrl, expression);
+    const result = JSON.parse(raw);
+    if (result.ok) return true;
+    await sleep(result.loading ? 2000 : 1500);
+  }
+  return false;
+}
+
+async function ensureChatReady() {
+  let found = await findChatPage();
+  if (found.error === "TAOBAO_NOT_RUNNING") {
+    if (!(await relaunchTaobaoDesktop())) return found;
+    found = await findChatPage();
+  }
+  if (found.error === "CHAT_NOT_OPEN") {
+    log("聊天頁未開啟，正在自動打開消息…");
+    try {
+      if (await openChatPageViaNavigate()) {
+        found = await findChatPage();
+      } else {
+        log("自動打開聊天頁失敗，請在淘寶點「消息」");
+        return found;
+      }
+    } catch (error) {
+      log(`自動打開聊天頁失敗：${error.message}`);
+      return found;
+    }
+  }
+  if (!found.page) return found;
+
+  try {
+    const snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
+    if (snapshot.active === TARGET_CONVERSATION) return found;
+    log(`對話不是「${TARGET_CONVERSATION}」，正在自動切換…`);
+    if (await selectTargetConversation(found.page.webSocketDebuggerUrl)) {
+      log(`已切到「${TARGET_CONVERSATION}」`);
+      return found;
+    }
+    log(`自動切換對話失敗，目前請手動點「${TARGET_CONVERSATION}」`);
+  } catch (error) {
+    log(`檢查對話失敗：${error.message}`);
+  }
+  return found;
 }
 
 function evaluateInPage(wsUrl, expression) {
@@ -473,12 +613,12 @@ async function syncOnce() {
     return;
   }
 
-  const found = await findChatPage();
+  const found = await ensureChatReady();
   if (found.error === "TAOBAO_NOT_RUNNING") {
     log("淘寶桌面版沒有以同步模式執行（找不到除錯埠）");
     return;
   }
-  if (found.error === "CHAT_NOT_OPEN") {
+  if (found.error === "CHAT_NOT_OPEN" || !found.page) {
     log("淘寶桌面版沒有開啟聊天頁（可能被登出，或還沒點開「消息」）");
     return;
   }
@@ -510,13 +650,18 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--set-secret")) return setSecret();
   if (args.includes("--once")) return syncOnce();
+  if (args.includes("--ensure")) {
+    const found = await ensureChatReady();
+    console.log(JSON.stringify(found.error ? found : { ok: true, url: found.page.url }));
+    return;
+  }
   if (args.includes("--orders")) {
     await syncOrders();
     await sync1688Orders();
     return;
   }
 
-  log(`常駐同步啟動（聊天每 ${POLL_MS / 1000} 秒、訂單每 ${ORDER_POLL_MS / 60000} 分鐘檢查一次）`);
+  log(`常駐同步啟動（聊天每 ${POLL_MS / 1000} 秒、訂單每 ${ORDER_POLL_MS / 60000} 分鐘；淘寶關掉會自動重開並進捷豹對話）`);
   for (;;) {
     try {
       await syncOnce();
