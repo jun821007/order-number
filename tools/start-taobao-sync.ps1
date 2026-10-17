@@ -69,8 +69,14 @@ if (-not $task) {
     Write-Host "[3/4] 背景同步已啟動" -ForegroundColor Green
 }
 
-Write-Host "[4/4] 背景同步會自動重開關掉的淘寶並進「捷豹國際集運站」；淘寶和 1688 Chrome 可縮小。"
-Start-Sleep -Seconds 4
+Write-Host "[4/4] 正在自動打開「捷豹國際集運站」對話…"
+node $syncScript --ensure
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "      對話已就緒" -ForegroundColor Green
+} else {
+    Write-Host "      自動進對話失敗，請在淘寶手動點「消息」→「捷豹國際集運站」" -ForegroundColor Yellow
+}
+
 if (Test-Path $logFile) {
     Write-Host ""
     Write-Host "最近狀態：" -ForegroundColor Cyan

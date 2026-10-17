@@ -18,7 +18,8 @@ const execFileAsync = promisify(execFile);
 const BACKEND_URL = process.env.ORDER_TOOL_BACKEND_URL || "https://order-number-production.up.railway.app";
 const DEBUG_PORT = Number(process.env.TAOBAO_DEBUG_PORT || 9333);
 const TARGET_CONVERSATION = process.env.TAOBAO_TARGET_CONVERSATION || "捷豹國際集運站";
-const CHAT_URL = process.env.TAOBAO_CHAT_URL || "https://market.m.taobao.com/app/im/chat-core/index.html#/";
+const CHAT_URL = process.env.TAOBAO_CHAT_URL
+  || "https://market.m.taobao.com/app/im/chat-core/index.html?spm=tbpcclient.personal_index.sidebar.message#/";
 const ENSURE_TASK_NAME = process.env.TAOBAO_ENSURE_TASK || "OrderNumberEnsureTaobao";
 const RELAUNCH_COOLDOWN_MS = Number(process.env.TAOBAO_RELAUNCH_COOLDOWN_MS || 2 * 60 * 1000);
 const POLL_MS = Number(process.env.TAOBAO_POLL_MS || 15000);
@@ -107,6 +108,28 @@ async function listDebugPages() {
   return res.json();
 }
 
+async function inspectChatPage(page) {
+  try {
+    const raw = await evaluateInPage(page.webSocketDebuggerUrl, `JSON.stringify({
+      convCount: document.querySelectorAll(".conversation-item").length,
+      names: [...document.querySelectorAll(".conversation-item .name")].map((n) => n.innerText.trim()).filter(Boolean),
+      active: document.querySelector(".conversation-item.active .name")?.innerText?.trim() || null,
+      loggedOut: /您需要登录才能继续访问|請先登入/.test(document.body?.innerText || "")
+    })`);
+    return JSON.parse(raw);
+  } catch {
+    return { convCount: 0, names: [], active: null, loggedOut: true };
+  }
+}
+
+async function closeDebugPage(page) {
+  try {
+    await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/close/${page.id}`, { signal: AbortSignal.timeout(3000) });
+  } catch {
+    // ignore
+  }
+}
+
 async function findChatPage() {
   let targets;
   try {
@@ -114,8 +137,34 @@ async function findChatPage() {
   } catch {
     return { error: "TAOBAO_NOT_RUNNING" };
   }
-  const page = targets.find((t) => t.type === "page" && t.url.includes("/app/im/"));
-  return page ? { page } : { error: "CHAT_NOT_OPEN" };
+  const candidates = targets.filter((t) => t.type === "page" && t.url.includes("/app/im/"));
+  if (!candidates.length) return { error: "CHAT_NOT_OPEN" };
+
+  let best = null;
+  let bestScore = -1;
+  for (const page of candidates) {
+    const info = await inspectChatPage(page);
+    // Prefer the real sidebar chat (has conversations) over the empty navigated clone.
+    let score = info.convCount;
+    if (info.names.includes(TARGET_CONVERSATION)) score += 100;
+    if (info.active === TARGET_CONVERSATION) score += 50;
+    if (page.url.includes("spm=")) score += 5;
+    if (info.loggedOut || info.convCount === 0) score -= 1000;
+    if (score > bestScore) {
+      best = { page, info };
+      bestScore = score;
+    }
+  }
+
+  // Close empty/logged-out duplicate chat tabs so we don't keep picking the wrong one.
+  for (const page of candidates) {
+    if (page.id === best?.page?.id) continue;
+    const info = await inspectChatPage(page);
+    if (info.loggedOut || info.convCount === 0) await closeDebugPage(page);
+  }
+
+  if (!best || bestScore < 0) return { error: "CHAT_NOT_OPEN" };
+  return { page: best.page, info: best.info };
 }
 
 let lastRelaunchAt = 0;
@@ -175,15 +224,17 @@ function cdpCall(wsUrl, method, params = {}, timeoutMs = 15000) {
 }
 
 async function openChatPageViaNavigate() {
+  // Prefer bringing up the sidebar chat URL; avoid leaving behind empty "please login" clones.
   const targets = await listDebugPages();
-  const candidate = targets.find((t) => t.type === "page" && /^https?:/i.test(t.url) && !t.url.includes("/app/im/"))
+  const candidate = targets.find((t) => t.type === "page" && t.url.includes("new-home"))
+    || targets.find((t) => t.type === "page" && /^https?:/i.test(t.url) && !t.url.includes("/app/im/"))
     || targets.find((t) => t.type === "page" && t.url === "about:blank");
   if (!candidate?.webSocketDebuggerUrl) return false;
   await cdpCall(candidate.webSocketDebuggerUrl, "Page.navigate", { url: CHAT_URL });
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 25; i++) {
     await sleep(1000);
     const found = await findChatPage();
-    if (found.page) return true;
+    if (found.page && found.info?.convCount > 0) return true;
   }
   return false;
 }
@@ -196,15 +247,24 @@ async function selectTargetConversation(wsUrl) {
     if (!names.length) return JSON.stringify({ ok: false, loading: true, names: [] });
     const hit = items.find((el) => (el.querySelector(".name")?.innerText || "").trim() === target);
     if (!hit) return JSON.stringify({ ok: false, loading: false, names: names.slice(0, 30) });
-    hit.click();
+    const clickable = hit.querySelector(".name") || hit;
+    clickable.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    clickable.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    clickable.click();
     const active = document.querySelector(".conversation-item.active .name")?.innerText?.trim() || null;
-    return JSON.stringify({ ok: active === target, active, loading: false });
+    const shopTitle = document.querySelector(".shopName__f8d760, .ww_message .name, .shopInfo .name")?.innerText?.trim() || "";
+    return JSON.stringify({ active, shopTitle, loading: false, clicked: true });
   })()`;
-  // Chat list often loads a few seconds after the page appears.
   for (let attempt = 0; attempt < 20; attempt++) {
     const raw = await evaluateInPage(wsUrl, expression);
     const result = JSON.parse(raw);
-    if (result.ok) return true;
+    if (result.active === TARGET_CONVERSATION) return true;
+    if (result.clicked) {
+      await sleep(1000);
+      const snap = JSON.parse(await evaluateInPage(wsUrl, EXTRACT_EXPRESSION));
+      if (snap.active === TARGET_CONVERSATION) return true;
+      if (snap.messages?.length && (result.shopTitle || "").includes(TARGET_CONVERSATION)) return true;
+    }
     await sleep(result.loading ? 2000 : 1500);
   }
   return false;
@@ -214,6 +274,7 @@ async function ensureChatReady() {
   let found = await findChatPage();
   if (found.error === "TAOBAO_NOT_RUNNING") {
     if (!(await relaunchTaobaoDesktop())) return found;
+    await sleep(3000);
     found = await findChatPage();
   }
   if (found.error === "CHAT_NOT_OPEN") {
@@ -233,12 +294,13 @@ async function ensureChatReady() {
   if (!found.page) return found;
 
   try {
+    if (found.info?.active === TARGET_CONVERSATION) return found;
     const snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
     if (snapshot.active === TARGET_CONVERSATION) return found;
     log(`對話不是「${TARGET_CONVERSATION}」，正在自動切換…`);
     if (await selectTargetConversation(found.page.webSocketDebuggerUrl)) {
       log(`已切到「${TARGET_CONVERSATION}」`);
-      return found;
+      return await findChatPage();
     }
     log(`自動切換對話失敗，目前請手動點「${TARGET_CONVERSATION}」`);
   } catch (error) {
