@@ -55,14 +55,8 @@ body {
   max-width: 100%;
 }
 
-.wechat-label-card {
-  border-color: #86efac;
-  background: #f0fdf4;
-}
-
-.wechat-label-card .summary-box {
-  margin-top: 10px;
-  min-height: 3em;
+.inbox-sync-pills {
+  margin-top: 0;
 }
 
 .sync-pill::before {

@@ -79,14 +79,8 @@ const els = {
   inboxSyncStatus: document.getElementById("inboxSyncStatus"),
   inboxSyncDetail: document.getElementById("inboxSyncDetail"),
   taobaoSyncStatus: document.getElementById("taobaoSyncStatus"),
-  wechatSyncStatus: document.getElementById("wechatSyncStatus"),
   lineSyncStatus: document.getElementById("lineSyncStatus"),
-  wechatCardSyncStatus: document.getElementById("wechatCardSyncStatus"),
-  wechatLabelFiles: document.getElementById("wechatLabelFiles"),
-  wechatLabelText: document.getElementById("wechatLabelText"),
-  wechatLabelScanBtn: document.getElementById("wechatLabelScanBtn"),
-  wechatLabelInboundBtn: document.getElementById("wechatLabelInboundBtn"),
-  wechatLabelResult: document.getElementById("wechatLabelResult"),
+  inboxLineSyncStatus: document.getElementById("inboxLineSyncStatus"),
   authOverlay: document.getElementById("authOverlay"),
   loginUsername: document.getElementById("loginUsername"),
   loginPassword: document.getElementById("loginPassword"),
@@ -106,8 +100,7 @@ const state = {
   saving: false,
   syncing: false,
   pendingSyncRender: false,
-  inbox: { pending: [], log: [], sync: null, syncWechat: null, syncLine: null },
-  wechatDetectedTrackings: [],
+  inbox: { pending: [], log: [], sync: null, syncLine: null },
   shippedCollapsed: true,
   friendListCollapsed: true,
   addParcelCollapsed: true,
@@ -2204,7 +2197,6 @@ async function fetchInboxState() {
       pending: json.pending || [],
       log: json.log || [],
       sync: json.sync || { state: "offline", label: "淘寶同步未連線" },
-      syncWechat: json.syncWechat || { state: "offline", label: "微信同步未連線" },
       syncLine: json.syncLine || { state: "offline", label: "LINE記事本同步未連線" }
     };
     renderInbox();
@@ -2213,116 +2205,26 @@ async function fetchInboxState() {
   }
 }
 
-function extractTrackingsFromText(text) {
-  const found = new Set();
-  String(text || "").toUpperCase().replace(/\s+/g, " ").match(/YT\d{10,}|[A-Z]{2}\d{8,40}|\b\d{12,20}\b/g)?.forEach((t) => {
-    if (/^(YT\d{10,}|[A-Z]{2}\d{8,40}|\d{12,20})$/.test(t)) found.add(t);
-  });
-  return [...found];
-}
-
-async function detectTrackingsFromImageFile(file) {
-  const found = new Set();
-  const bitmap = await createImageBitmap(file);
-  try {
-    if (typeof BarcodeDetector !== "undefined") {
-      const detector = new BarcodeDetector({ formats: ["code_128", "code_39", "codabar", "itf", "ean_13"] });
-      const codes = await detector.detect(bitmap);
-      codes.forEach((code) => {
-        extractTrackingsFromText(code.rawValue || "").forEach((t) => found.add(t));
-      });
-    }
-  } catch (error) {
-    console.warn("BarcodeDetector failed", error);
+function formatInboxLogText(entry) {
+  const text = String(entry?.text || "");
+  if (/^(淘寶|LINE)\//.test(text)) return text;
+  if (/LINE記事本|微信面單/.test(text) || entry?.type === "wechat_label") {
+    const body = text
+      .replace(/^LINE記事本自動新增\s*/, "記事本自動新增 ")
+      .replace(/^微信面單入庫\s*/, "入庫 ");
+    return `LINE/${body}`;
   }
-
-  // OCR fallback (printed number under barcode) via Tesseract CDN, loaded once.
-  try {
-    if (!window.Tesseract) {
-      await new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-      });
-    }
-    const result = await window.Tesseract.recognize(file, "eng", { logger: () => {} });
-    extractTrackingsFromText(result?.data?.text || "").forEach((t) => found.add(t));
-  } catch (error) {
-    console.warn("OCR failed", error);
-  } finally {
-    bitmap.close?.();
+  if (
+    entry?.type === "inbound"
+    || entry?.type === "quote"
+    || entry?.type === "taiwan"
+    || entry?.type === "orders"
+    || /淘寶訂單自動新增|自動入庫|收到出貨報價|台灣單號/.test(text)
+  ) {
+    const body = text.replace(/^淘寶訂單自動新增\s*/, "訂單自動新增 ");
+    return `淘寶/${body}`;
   }
-  return [...found];
-}
-
-async function scanWechatLabelFiles() {
-  if (!els.wechatLabelFiles?.files?.length) {
-    toast("請先選擇面單照片");
-    return;
-  }
-  els.wechatLabelScanBtn.disabled = true;
-  els.wechatLabelResult.textContent = "辨識中…";
-  const all = new Set(state.wechatDetectedTrackings);
-  try {
-    for (const file of els.wechatLabelFiles.files) {
-      const trackings = await detectTrackingsFromImageFile(file);
-      trackings.forEach((t) => all.add(t));
-    }
-    state.wechatDetectedTrackings = [...all];
-    const typed = extractTrackingsFromText(els.wechatLabelText?.value || "");
-    typed.forEach((t) => all.add(t));
-    const list = [...all];
-    if (els.wechatLabelText && list.length) {
-      els.wechatLabelText.value = list.join("\n");
-    }
-    els.wechatLabelResult.textContent = list.length
-      ? `辨識到 ${list.length} 個單號：\n${list.join("\n")}`
-      : "沒辨識到單號，請改貼 YT 單號後再入庫";
-  } catch (error) {
-    console.error(error);
-    els.wechatLabelResult.textContent = `辨識失敗：${error.message || error}`;
-  } finally {
-    els.wechatLabelScanBtn.disabled = false;
-  }
-}
-
-async function runWechatLabelInbound() {
-  const fromText = extractTrackingsFromText(els.wechatLabelText?.value || "");
-  const trackings = [...new Set([...state.wechatDetectedTrackings, ...fromText])];
-  if (!trackings.length) return toast("沒有可入庫的單號");
-  els.wechatLabelInboundBtn.disabled = true;
-  try {
-    const response = await authRequest("/api/order-tool/inbound-labels", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trackings, source: "wechat" })
-    });
-    const json = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      els.wechatLabelResult.textContent = `入庫失敗：${json.error || response.status}`;
-      return toast("微信面單入庫失敗");
-    }
-    const lines = [];
-    if (json.updated?.length) {
-      lines.push(`已入庫 ${json.updated.length} 筆：`);
-      json.updated.forEach((u) => lines.push(`${u.tracking} ${u.owner}${u.remark ? ` ${u.remark}` : ""}`));
-    }
-    if (json.missing?.length) lines.push(`單號未key：${json.missing.join("、")}`);
-    if (json.skipped?.length) lines.push(`已出轉運略過：${json.skipped.join("、")}`);
-    els.wechatLabelResult.textContent = lines.join("\n") || "沒有變更";
-    toast(json.updated?.length ? `已入庫 ${json.updated.length} 筆` : "沒有新入庫");
-    const snapshot = await loadFromBackend();
-    applyServerSnapshot({ ...snapshot.data, version: snapshot.version });
-    await fetchInboxState();
-    render();
-  } catch (error) {
-    console.error(error);
-    toast("微信面單入庫失敗");
-  } finally {
-    els.wechatLabelInboundBtn.disabled = false;
-  }
+  return text;
 }
 
 async function resolvePendingShipment(id, action) {
@@ -2377,20 +2279,32 @@ function confirmPendingShipment(pending) {
 
 function renderInbox() {
   if (!els.inboxCard) return;
-  const { pending, log, sync, syncWechat, syncLine } = state.inbox;
-  const hasSyncInfo = Boolean(sync?.lastHeartbeatAt || sync?.state || log.length);
+  const { pending, log, sync, syncLine } = state.inbox;
+  const hasSyncInfo = Boolean(sync?.lastHeartbeatAt || syncLine?.lastHeartbeatAt || sync?.state || syncLine?.state || log.length);
   els.inboxCard.classList.toggle("hidden", !pending.length && !log.length && !hasSyncInfo);
   applySyncPill(els.taobaoSyncStatus, sync);
   applySyncPill(els.inboxSyncStatus, sync);
-  applySyncPill(els.wechatSyncStatus, syncWechat || { state: "offline", label: "微信同步未連線" });
-  applySyncPill(els.wechatCardSyncStatus, syncWechat || { state: "offline", label: "微信同步未連線" });
   applySyncPill(els.lineSyncStatus, syncLine || { state: "offline", label: "LINE記事本同步未連線" });
+  applySyncPill(els.inboxLineSyncStatus, syncLine || { state: "offline", label: "LINE記事本同步未連線" });
   if (els.inboxSyncDetail) {
     const parts = [];
-    if (sync?.detail) parts.push(sync.detail);
-    if (sync?.conversation) parts.push(sync.conversation);
-    if (sync?.lastHeartbeatAt) parts.push(`最近回報 ${formatTime(sync.lastHeartbeatAt)}`);
-    els.inboxSyncDetail.textContent = parts.join("｜");
+    if (sync?.detail || sync?.conversation || sync?.lastHeartbeatAt) {
+      parts.push([
+        "淘寶",
+        sync.detail,
+        sync.conversation,
+        sync.lastHeartbeatAt ? `最近回報 ${formatTime(sync.lastHeartbeatAt)}` : ""
+      ].filter(Boolean).join("｜"));
+    }
+    if (syncLine?.detail || syncLine?.conversation || syncLine?.lastHeartbeatAt) {
+      parts.push([
+        "LINE",
+        syncLine.detail,
+        syncLine.conversation,
+        syncLine.lastHeartbeatAt ? `最近回報 ${formatTime(syncLine.lastHeartbeatAt)}` : ""
+      ].filter(Boolean).join("｜"));
+    }
+    els.inboxSyncDetail.textContent = parts.join(" ／ ");
     els.inboxSyncDetail.classList.toggle("hidden", !parts.length);
   }
 
@@ -2448,7 +2362,7 @@ function renderInbox() {
   els.inboxLogList.innerHTML = "";
   [...log].reverse().slice(0, 10).forEach((entry) => {
     const li = document.createElement("li");
-    li.textContent = `${formatTime(entry.at)}｜${entry.text}`;
+    li.textContent = `${formatTime(entry.at)}｜${formatInboxLogText(entry)}`;
     els.inboxLogList.appendChild(li);
   });
 }
@@ -2637,8 +2551,6 @@ async function init() {
 
   els.bulkAddBtn.addEventListener("click", addBulkParcels);
   els.bulkInboundBtn.addEventListener("click", runBulkInbound);
-  if (els.wechatLabelScanBtn) els.wechatLabelScanBtn.addEventListener("click", scanWechatLabelFiles);
-  if (els.wechatLabelInboundBtn) els.wechatLabelInboundBtn.addEventListener("click", runWechatLabelInbound);
   els.copyBulkInboundResultBtn.addEventListener("click", () => {
     if (!state.bulkInboundCopyText) return toast("目前沒有可複製的批量入庫結果");
     copyText(state.bulkInboundCopyText);

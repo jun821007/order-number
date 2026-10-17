@@ -924,9 +924,9 @@ async function processInboxMessages(messages) {
         if (result.updated.length || result.missing.length) {
           const parts = [];
           if (result.updated.length) {
-            parts.push(`自動入庫 ${result.updated.length} 筆：${result.updated.map((u) => `${u.weight.toFixed(1)} ${u.tracking} ${u.owner}`).join("、")}`);
+            parts.push(`淘寶/自動入庫 ${result.updated.length} 筆：${result.updated.map((u) => `${u.weight.toFixed(1)} ${u.tracking} ${u.owner}`).join("、")}`);
           }
-          if (result.missing.length) parts.push(`單號未key：${result.missing.join("、")}`);
+          if (result.missing.length) parts.push(`淘寶/單號未key：${result.missing.join("、")}`);
           inbox.log.push({ at: nowIso, message_ts: message.ts, type: "inbound", text: parts.join("；") });
         }
       } else if (parsed.type === "quote") {
@@ -945,7 +945,7 @@ async function processInboxMessages(messages) {
             address: parsed.address
           });
           summary.quotes += 1;
-          inbox.log.push({ at: nowIso, message_ts: message.ts, type: "quote", text: `收到出貨報價 ${parsed.items.length} 筆，拍 ${parsed.cny}，待確認` });
+          inbox.log.push({ at: nowIso, message_ts: message.ts, type: "quote", text: `淘寶/收到出貨報價 ${parsed.items.length} 筆，拍 ${parsed.cny}，待確認` });
         }
       } else if (parsed.type === "address") {
         const target = [...inbox.pending].reverse().find((pending) => !pending.address
@@ -960,9 +960,9 @@ async function processInboxMessages(messages) {
         if (result === "group") dataChanged = true;
         if (result === "group" || result === "pending") summary.taiwan += 1;
         const text = {
-          group: `台灣單號 ${parsed.taiwanTracking} 已自動填入最近一筆未填單號的出貨`,
-          pending: `台灣單號 ${parsed.taiwanTracking} 已記到待確認出貨，確認時會自動帶入`,
-          none: `收到台灣單號 ${parsed.taiwanTracking}，但找不到 3 天內未填單號的出貨，請手動填入`
+          group: `淘寶/台灣單號 ${parsed.taiwanTracking} 已自動填入最近一筆未填單號的出貨`,
+          pending: `淘寶/台灣單號 ${parsed.taiwanTracking} 已記到待確認出貨，確認時會自動帶入`,
+          none: `淘寶/收到台灣單號 ${parsed.taiwanTracking}，但找不到 3 天內未填單號的出貨，請手動填入`
         }[result];
         if (text) inbox.log.push({ at: nowIso, message_ts: message.ts, type: "taiwan", text });
       }
@@ -1068,9 +1068,9 @@ function normalizeOrderSource(raw) {
 }
 
 function orderSourceLogPrefix(source) {
-  if (source === "taobao") return "淘寶訂單自動新增";
-  if (source === "line-notebook") return "LINE記事本自動新增";
-  return source;
+  if (source === "taobao") return "淘寶/訂單自動新增";
+  if (source === "line-notebook") return "LINE/記事本自動新增";
+  return `${source}/`;
 }
 
 async function addTaobaoOrders(ownerName, orders, source = "taobao") {
