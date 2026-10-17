@@ -270,13 +270,121 @@ async function selectTargetConversation(wsUrl) {
   return false;
 }
 
+async function clickImmediateLogin() {
+  let targets;
+  try {
+    targets = await listDebugPages();
+  } catch {
+    return false;
+  }
+  const loginPages = targets.filter((t) => t.type === "page" && (
+    t.url.includes("loginPop") || /登陆|登錄|登录/i.test(t.title || "")
+  ));
+  if (!loginPages.length) return false;
+
+  // Only click when the button is actually visible (ignore stale/hidden loginPop pages).
+  const expression = `(() => {
+    const btn = document.querySelector(".login-btn-in")
+      || [...document.querySelectorAll("button,a,div,span")].find((el) => /立即登[录錄入]/.test((el.innerText || "").trim()));
+    if (!btn) return JSON.stringify({ ok: false, reason: "no-btn" });
+    const rect = btn.getBoundingClientRect();
+    const style = getComputedStyle(btn);
+    const visible = rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+    if (!visible) return JSON.stringify({ ok: false, reason: "hidden" });
+    btn.click();
+    return JSON.stringify({ ok: true, text: (btn.innerText || "").trim() });
+  })()`;
+
+  let clicked = false;
+  for (const page of loginPages) {
+    try {
+      const raw = await evaluateInPage(page.webSocketDebuggerUrl, expression);
+      const result = JSON.parse(raw);
+      if (result.ok) {
+        log(`已自動點「${result.text || "立即登入"}」`);
+        clicked = true;
+        break;
+      }
+    } catch {
+      // popup may already be closing
+    }
+  }
+  if (!clicked) return false;
+
+  // After login the app may briefly restart; wait for debug port and for the visible button to disappear.
+  for (let i = 0; i < 30; i++) {
+    await sleep(1000);
+    try {
+      await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`, { signal: AbortSignal.timeout(2000) });
+      const pages = await listDebugPages();
+      const pop = pages.find((t) => t.type === "page" && t.url.includes("loginPop"));
+      if (!pop) return true;
+      const state = JSON.parse(await evaluateInPage(pop.webSocketDebuggerUrl, `JSON.stringify({
+        visible: (() => {
+          const btn = document.querySelector(".login-btn-in");
+          if (!btn) return false;
+          const rect = btn.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        })()
+      })`));
+      if (!state.visible) return true;
+    } catch {
+      // port down while app settles after login
+    }
+  }
+  return true;
+}
+
+async function waitForLoginPopup(maxSeconds = 15) {
+  for (let i = 0; i < maxSeconds; i++) {
+    try {
+      const pages = await listDebugPages();
+      for (const page of pages.filter((t) => t.type === "page" && t.url.includes("loginPop"))) {
+        const raw = await evaluateInPage(page.webSocketDebuggerUrl, `JSON.stringify({
+          visible: (() => {
+            const btn = document.querySelector(".login-btn-in");
+            if (!btn) return false;
+            const rect = btn.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          })()
+        })`);
+        if (JSON.parse(raw).visible) return true;
+      }
+    } catch {
+      // not ready
+    }
+    await sleep(1000);
+  }
+  return false;
+}
+
 async function ensureChatReady() {
   let found = await findChatPage();
   if (found.error === "TAOBAO_NOT_RUNNING") {
     if (!(await relaunchTaobaoDesktop())) return found;
-    await sleep(3000);
+    await sleep(4000);
+    // Fresh start often shows 「立即登录」 first.
+    await waitForLoginPopup(12);
     found = await findChatPage();
   }
+
+  try {
+    await clickImmediateLogin();
+  } catch (error) {
+    log(`自動登入點擊失敗：${error.message}`);
+  }
+
+  // If login bounced the app off the debug port, bring it back once.
+  found = await findChatPage();
+  if (found.error === "TAOBAO_NOT_RUNNING") {
+    if (await relaunchTaobaoDesktop()) {
+      await sleep(4000);
+      await waitForLoginPopup(12);
+      await clickImmediateLogin();
+      found = await findChatPage();
+    }
+  }
+
   if (found.error === "CHAT_NOT_OPEN") {
     log("聊天頁未開啟，正在自動打開消息…");
     try {
