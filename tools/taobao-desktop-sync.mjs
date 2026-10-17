@@ -360,22 +360,49 @@ async function waitForLoginPopup(maxSeconds = 15) {
 
 async function ensureChatReady() {
   let found = await findChatPage();
+
+  // Already on a usable chat page — never touch the login popup again.
+  if (found.page && found.info?.convCount > 0) {
+    if (found.info.active === TARGET_CONVERSATION) return found;
+    try {
+      const snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
+      if (snapshot.active === TARGET_CONVERSATION) return found;
+      log(`對話不是「${TARGET_CONVERSATION}」，正在自動切換…`);
+      if (await selectTargetConversation(found.page.webSocketDebuggerUrl)) {
+        log(`已切到「${TARGET_CONVERSATION}」`);
+        return await findChatPage();
+      }
+      log(`自動切換對話失敗，目前請手動點「${TARGET_CONVERSATION}」`);
+    } catch (error) {
+      log(`檢查對話失敗：${error.message}`);
+    }
+    return found;
+  }
+
   if (found.error === "TAOBAO_NOT_RUNNING") {
     if (!(await relaunchTaobaoDesktop())) return found;
     await sleep(4000);
     // Fresh start often shows 「立即登录」 first.
     await waitForLoginPopup(12);
+    try {
+      await clickImmediateLogin();
+    } catch (error) {
+      log(`自動登入點擊失敗：${error.message}`);
+    }
     found = await findChatPage();
   }
 
-  try {
-    await clickImmediateLogin();
-  } catch (error) {
-    log(`自動登入點擊失敗：${error.message}`);
+  // Chat missing but app is up — login popup may be blocking; click once, then open messages.
+  if (found.error === "CHAT_NOT_OPEN" || (found.page && !(found.info?.convCount > 0))) {
+    await waitForLoginPopup(5);
+    try {
+      await clickImmediateLogin();
+    } catch (error) {
+      log(`自動登入點擊失敗：${error.message}`);
+    }
+    found = await findChatPage();
   }
 
-  // If login bounced the app off the debug port, bring it back once.
-  found = await findChatPage();
   if (found.error === "TAOBAO_NOT_RUNNING") {
     if (await relaunchTaobaoDesktop()) {
       await sleep(4000);
