@@ -636,6 +636,8 @@ function inboxFilePath() {
   return path.join(path.dirname(activeDataFilePath), "inbox.json");
 }
 
+const SYNC_STALE_MS = 3 * 60 * 1000;
+
 async function readInbox() {
   try {
     const raw = await fs.readFile(inboxFilePath(), "utf8");
@@ -643,10 +645,11 @@ async function readInbox() {
     return {
       processed: Array.isArray(parsed.processed) ? parsed.processed : [],
       pending: Array.isArray(parsed.pending) ? parsed.pending : [],
-      log: Array.isArray(parsed.log) ? parsed.log : []
+      log: Array.isArray(parsed.log) ? parsed.log : [],
+      sync: parsed.sync && typeof parsed.sync === "object" ? parsed.sync : null
     };
   } catch {
-    return { processed: [], pending: [], log: [] };
+    return { processed: [], pending: [], log: [], sync: null };
   }
 }
 
@@ -656,10 +659,42 @@ async function writeInbox(inbox) {
     pending: inbox.pending,
     log: inbox.log.slice(-INBOX_MAX_LOG)
   };
+  if (inbox.sync && typeof inbox.sync === "object") next.sync = inbox.sync;
   const filePath = inboxFilePath();
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(`${filePath}.tmp`, JSON.stringify(next, null, 2), "utf8");
   await fs.rename(`${filePath}.tmp`, filePath);
+}
+
+function buildSyncStatus(sync) {
+  if (!sync?.lastHeartbeatAt) {
+    return { state: "offline", label: "淘寶同步未連線", detail: "", lastHeartbeatAt: null };
+  }
+  const ageMs = Date.now() - Date.parse(sync.lastHeartbeatAt);
+  if (!Number.isFinite(ageMs) || ageMs > SYNC_STALE_MS) {
+    return {
+      state: "offline",
+      label: "淘寶同步未連線",
+      detail: sync.detail || "",
+      lastHeartbeatAt: sync.lastHeartbeatAt
+    };
+  }
+  if (sync.ok === false) {
+    return {
+      state: "degraded",
+      label: "淘寶同步異常",
+      detail: sync.detail || "",
+      lastHeartbeatAt: sync.lastHeartbeatAt,
+      conversation: sync.conversation || ""
+    };
+  }
+  return {
+    state: "running",
+    label: "淘寶同步運作中",
+    detail: sync.detail || "",
+    lastHeartbeatAt: sync.lastHeartbeatAt,
+    conversation: sync.conversation || ""
+  };
 }
 
 function hashMessageId(id) {
@@ -871,10 +906,43 @@ app.post("/api/inbox/messages", requireInboxSecret, async (req, res) => {
     .map((m) => ({ id: m.id.slice(0, 6000), ts: String(m.ts || ""), sender: String(m.sender || ""), self: m.self === true, text: m.text.slice(0, 5000) }));
   try {
     const summary = await processInboxMessages(messages);
+    await withWriteLock(async () => {
+      const inbox = await readInbox();
+      inbox.sync = {
+        ok: true,
+        detail: `剛送出 ${messages.length} 則`,
+        conversation: String(req.body?.conversation || inbox.sync?.conversation || "").slice(0, 100),
+        lastHeartbeatAt: new Date().toISOString()
+      };
+      await writeInbox(inbox);
+    });
     return res.json({ ok: true, ...summary });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ ok: false, error: "INBOX_FAILED" });
+  }
+});
+
+app.post("/api/inbox/heartbeat", requireInboxSecret, async (req, res) => {
+  const ok = req.body?.ok !== false;
+  const detail = String(req.body?.detail || "").trim().slice(0, 200);
+  const conversation = String(req.body?.conversation || "").trim().slice(0, 100);
+  try {
+    const sync = await withWriteLock(async () => {
+      const inbox = await readInbox();
+      inbox.sync = {
+        ok,
+        detail,
+        conversation,
+        lastHeartbeatAt: new Date().toISOString()
+      };
+      await writeInbox(inbox);
+      return inbox.sync;
+    });
+    return res.json({ ok: true, sync: buildSyncStatus(sync) });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "HEARTBEAT_FAILED" });
   }
 });
 
@@ -949,7 +1017,12 @@ app.post("/api/inbox/orders", requireInboxSecret, async (req, res) => {
 app.get("/api/inbox/state", requireAppAuth, async (_req, res) => {
   try {
     const inbox = await readInbox();
-    return res.json({ ok: true, pending: inbox.pending, log: inbox.log.slice(-20) });
+    return res.json({
+      ok: true,
+      pending: inbox.pending,
+      log: inbox.log.slice(-20),
+      sync: buildSyncStatus(inbox.sync)
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ ok: false, error: "READ_FAILED" });

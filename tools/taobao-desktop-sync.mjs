@@ -543,7 +543,20 @@ async function postToBackend(endpoint, body, secret) {
 }
 
 function postMessages(messages, secret) {
-  return postToBackend("/api/inbox/messages", { messages }, secret);
+  return postToBackend("/api/inbox/messages", { messages, conversation: TARGET_CONVERSATION }, secret);
+}
+
+async function postHeartbeat(secret, payload) {
+  try {
+    await postToBackend("/api/inbox/heartbeat", {
+      ok: payload.ok !== false,
+      detail: String(payload.detail || "").slice(0, 200),
+      conversation: String(payload.conversation || TARGET_CONVERSATION).slice(0, 100)
+    }, secret);
+  } catch (error) {
+    if (error.status === 401) log("密鑰錯誤：請執行 node taobao-desktop-sync.mjs --set-secret");
+    // heartbeat must not stop the sync loop
+  }
 }
 
 // Calls Taobao's own mtop API from inside a logged-in Taobao page, so the app's cookies and signing are reused.
@@ -874,16 +887,23 @@ async function syncOnce() {
   const found = await ensureChatReady();
   if (found.error === "TAOBAO_NOT_RUNNING") {
     log("淘寶桌面版沒有以同步模式執行（找不到除錯埠）");
+    await postHeartbeat(secret, { ok: false, detail: "淘寶未開啟或不是同步模式" });
     return;
   }
   if (found.error === "CHAT_NOT_OPEN" || !found.page) {
     log("淘寶桌面版沒有開啟聊天頁（可能被登出，或還沒點開「消息」）");
+    await postHeartbeat(secret, { ok: false, detail: "聊天頁未開啟" });
     return;
   }
 
   const snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
   if (snapshot.active !== TARGET_CONVERSATION) {
     log(`目前開的對話是「${snapshot.active || "無"}」，請切回「${TARGET_CONVERSATION}」`);
+    await postHeartbeat(secret, {
+      ok: false,
+      detail: `目前對話是「${snapshot.active || "無"}」`,
+      conversation: snapshot.active || ""
+    });
     return;
   }
 
@@ -891,6 +911,7 @@ async function syncOnce() {
   const unsent = messages.filter((m) => !sentIds.has(m.id));
   if (!unsent.length) {
     log(`運作中｜畫面 ${messages.length} 則，沒有新訊息`);
+    await postHeartbeat(secret, { ok: true, detail: `畫面 ${messages.length} 則` });
     return;
   }
 
@@ -898,9 +919,11 @@ async function syncOnce() {
     const result = await postMessages(unsent, secret);
     rememberSent(unsent.map((m) => m.id));
     log(`送出 ${unsent.length} 則｜入庫 ${result.inbound || 0}、待出貨 ${result.quotes || 0}、台灣單號 ${result.taiwan || 0}`);
+    await postHeartbeat(secret, { ok: true, detail: `剛送出 ${unsent.length} 則` });
   } catch (error) {
     if (error.status === 401) log("密鑰錯誤：請執行 node taobao-desktop-sync.mjs --set-secret");
     else log(`送出失敗：${error.message}`);
+    await postHeartbeat(secret, { ok: false, detail: `送出失敗：${error.message}` });
   }
 }
 

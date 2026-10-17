@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=20260326-26" />
   <link rel="manifest" href="./manifest.webmanifest?v=20260326-26" />
   <title>單號分類工具</title>
-  <link rel="stylesheet" href="./styles.css?v=20260326-29" />
+  <link rel="stylesheet" href="./styles.css?v=20261017-01" />
 </head>
 <body>
   <header class="app-header">
@@ -20,6 +20,7 @@
     <div class="app-header-main">
       <h1>單號分類工具</h1>
       <p>朋友單號管理、狀態追蹤、批量操作</p>
+      <div id="taobaoSyncStatus" class="sync-pill sync-offline" title="家裡淘寶桌面同步狀態">淘寶同步未連線</div>
     </div>
     <button id="logoutBtn" class="btn hidden" type="button">登出</button>
   </header>
@@ -47,7 +48,11 @@
 
       <div id="friendPanel" class="hidden">
         <section id="inboxCard" class="card inbox-card hidden">
-          <h3>淘寶自動抓取</h3>
+          <div class="inbox-card-head">
+            <h3>淘寶自動抓取</h3>
+            <span id="inboxSyncStatus" class="sync-pill sync-offline">淘寶同步未連線</span>
+          </div>
+          <p id="inboxSyncDetail" class="helper-text inbox-sync-detail"></p>
           <div id="inboxPendingList"></div>
           <details class="inbox-log">
             <summary>最近自動處理紀錄</summary>
@@ -185,7 +190,7 @@
     </div>
   </div>
 
-  <script src="./app-config.js?v=20260326-29"></script>
-  <script src="./app.js?v=20260326-31"></script>
+  <script src="./app-config.js?v=20261017-01"></script>
+  <script src="./app.js?v=20261017-01"></script>
 </body>
 </html>

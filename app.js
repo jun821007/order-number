@@ -76,6 +76,9 @@ const els = {
   inboxCard: document.getElementById("inboxCard"),
   inboxPendingList: document.getElementById("inboxPendingList"),
   inboxLogList: document.getElementById("inboxLogList"),
+  inboxSyncStatus: document.getElementById("inboxSyncStatus"),
+  inboxSyncDetail: document.getElementById("inboxSyncDetail"),
+  taobaoSyncStatus: document.getElementById("taobaoSyncStatus"),
   authOverlay: document.getElementById("authOverlay"),
   loginUsername: document.getElementById("loginUsername"),
   loginPassword: document.getElementById("loginPassword"),
@@ -95,7 +98,7 @@ const state = {
   saving: false,
   syncing: false,
   pendingSyncRender: false,
-  inbox: { pending: [], log: [] },
+  inbox: { pending: [], log: [], sync: null },
   shippedCollapsed: true,
   friendListCollapsed: true,
   addParcelCollapsed: true,
@@ -2168,13 +2171,31 @@ function shipParcels(targets, details) {
   persistAndRender("已更新為已出轉運");
 }
 
+function applySyncPill(el, sync) {
+  if (!el) return;
+  const info = sync || { state: "offline", label: "淘寶同步未連線", detail: "" };
+  el.classList.remove("sync-running", "sync-degraded", "sync-offline");
+  el.classList.add(
+    info.state === "running" ? "sync-running" : info.state === "degraded" ? "sync-degraded" : "sync-offline"
+  );
+  el.textContent = info.label || "淘寶同步未連線";
+  const tip = [info.detail, info.conversation, info.lastHeartbeatAt ? `心跳 ${formatTime(info.lastHeartbeatAt)}` : ""]
+    .filter(Boolean)
+    .join("｜");
+  el.title = tip || info.label || "";
+}
+
 async function fetchInboxState() {
   if (!state.authReady) return;
   try {
     const response = await authRequest("/api/inbox/state", { method: "GET" });
     if (!response.ok) return;
     const json = await response.json();
-    state.inbox = { pending: json.pending || [], log: json.log || [] };
+    state.inbox = {
+      pending: json.pending || [],
+      log: json.log || [],
+      sync: json.sync || { state: "offline", label: "淘寶同步未連線" }
+    };
     renderInbox();
   } catch (error) {
     console.error(error);
@@ -2233,8 +2254,19 @@ function confirmPendingShipment(pending) {
 
 function renderInbox() {
   if (!els.inboxCard) return;
-  const { pending, log } = state.inbox;
-  els.inboxCard.classList.toggle("hidden", !pending.length && !log.length);
+  const { pending, log, sync } = state.inbox;
+  const hasSyncInfo = Boolean(sync?.lastHeartbeatAt || sync?.state);
+  els.inboxCard.classList.toggle("hidden", !pending.length && !log.length && !hasSyncInfo);
+  applySyncPill(els.taobaoSyncStatus, sync);
+  applySyncPill(els.inboxSyncStatus, sync);
+  if (els.inboxSyncDetail) {
+    const parts = [];
+    if (sync?.detail) parts.push(sync.detail);
+    if (sync?.conversation) parts.push(sync.conversation);
+    if (sync?.lastHeartbeatAt) parts.push(`最近回報 ${formatTime(sync.lastHeartbeatAt)}`);
+    els.inboxSyncDetail.textContent = parts.join("｜");
+    els.inboxSyncDetail.classList.toggle("hidden", !parts.length);
+  }
 
   els.inboxPendingList.innerHTML = "";
   if (!pending.length) {
