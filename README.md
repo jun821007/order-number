@@ -83,6 +83,24 @@ node -e "const b=require('bcryptjs'); console.log(b.hashSync('你的密碼', 12)
 6. 每 60 分鐘讀一次淘寶「待收貨」訂單，有快遞單號的新訂單自動加到件主「鈞」名下（備註＝商品名前 20 字），排除集運站自己的訂單與虛擬商品；`--orders` 可立即檢查一次
 7. 1688：工作排程器 `Order1688Chrome` 開一個同步專用 Chrome（`--remote-debugging-port=9334`，設定檔在 `%LOCALAPPDATA%\order-number-taobao-sync\chrome-1688`），在裡面登入 1688 一次；每 60 分鐘在背景分頁讀「待收货」訂單與物流單號，一樣加到「鈞」名下
 
+### 微信面單入庫（選用）
+
+指定人用微信傳圓通等面單照片（單號多為 `YT…`）時，可自動／半自動入庫到轉運倉。**單號須已先 key 過**；面單通常沒重量，入庫時會保留原重量。
+
+**做法 A｜網頁（最快）**
+1. 開啟單號分類工具 →「微信面單入庫」
+2. 上傳面單照片（條碼／OCR 辨識）或直接貼 `YT…` 單號
+3. 按「入庫到轉運倉」
+
+**做法 B｜本機資料夾監看（接近背景同步）**
+1. 建立資料夾：`%USERPROFILE%\OrderNumberWeChatLabels`
+2. 安裝 OCR：`cd "C:\Users\rsz97\Order number\tools"; npm install`
+3. 執行：`node "C:\Users\rsz97\Order number\tools\wechat-label-sync.mjs"`
+4. 把微信收到的面單照片另存／拖進該資料夾；程式會辨識 `YT…` 並呼叫 `/api/inbox/labels`
+5. 與淘寶同步共用 `%LOCALAPPDATA%\order-number-taobao-sync\` 的 `INBOX_SECRET`
+
+> 直接讀取微信聊天資料庫／解密圖片屬於脆弱方案（版本常壞），目前刻意不做；用「另存到資料夾」或網頁上傳最穩。
+
 ### API 健康檢查
 
 - `GET /health`

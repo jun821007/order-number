@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=20260326-26" />
   <link rel="manifest" href="./manifest.webmanifest?v=20260326-26" />
   <title>單號分類工具</title>
-  <link rel="stylesheet" href="./styles.css?v=20261017-01" />
+  <link rel="stylesheet" href="./styles.css?v=20261017-02" />
 </head>
 <body>
   <header class="app-header">
@@ -20,7 +20,10 @@
     <div class="app-header-main">
       <h1>單號分類工具</h1>
       <p>朋友單號管理、狀態追蹤、批量操作</p>
-      <div id="taobaoSyncStatus" class="sync-pill sync-offline" title="家裡淘寶桌面同步狀態">淘寶同步未連線</div>
+      <div class="sync-pill-row">
+        <div id="taobaoSyncStatus" class="sync-pill sync-offline" title="家裡淘寶桌面同步狀態">淘寶同步未連線</div>
+        <div id="wechatSyncStatus" class="sync-pill sync-offline" title="微信面單同步狀態">微信同步未連線</div>
+      </div>
     </div>
     <button id="logoutBtn" class="btn hidden" type="button">登出</button>
   </header>
@@ -74,6 +77,23 @@
               <button id="bulkAddBtn" class="btn primary" disabled>批量新增單號</button>
             </div>
           </div>
+        </section>
+
+        <section id="wechatLabelCard" class="card wechat-label-card">
+          <div class="inbox-card-head">
+            <h3>微信面單入庫</h3>
+            <span id="wechatCardSyncStatus" class="sync-pill sync-offline">微信同步未連線</span>
+          </div>
+          <p class="helper-text">指定人傳的圓通等面單照片（YT 開頭單號）。辨識後入庫到轉運倉；單號須已先 key 過。面單通常沒重量，會保留原重量。</p>
+          <label class="field-label" for="wechatLabelFiles">上傳面單照片（可多張）</label>
+          <input id="wechatLabelFiles" type="file" accept="image/*" multiple />
+          <label class="field-label" for="wechatLabelText">或貼上／補上單號（每行一個，YT…）</label>
+          <textarea id="wechatLabelText" rows="3" placeholder="YT7649855634765"></textarea>
+          <div class="button-row wrap">
+            <button id="wechatLabelScanBtn" class="btn" type="button">辨識照片</button>
+            <button id="wechatLabelInboundBtn" class="btn primary" type="button">入庫到轉運倉</button>
+          </div>
+          <pre id="wechatLabelResult" class="summary-box"></pre>
         </section>
 
         <section id="inboundCard" class="card collapsible-card">
@@ -190,7 +210,7 @@
     </div>
   </div>
 
-  <script src="./app-config.js?v=20261017-01"></script>
-  <script src="./app.js?v=20261017-01"></script>
+  <script src="./app-config.js?v=20261017-02"></script>
+  <script src="./app.js?v=20261017-02"></script>
 </body>
 </html>

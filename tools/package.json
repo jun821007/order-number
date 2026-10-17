@@ -1,0 +1,8 @@
+{
+  "name": "order-number-desktop-tools",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "tesseract.js": "^5.1.1"
+  }
+}

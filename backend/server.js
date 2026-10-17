@@ -646,10 +646,11 @@ async function readInbox() {
       processed: Array.isArray(parsed.processed) ? parsed.processed : [],
       pending: Array.isArray(parsed.pending) ? parsed.pending : [],
       log: Array.isArray(parsed.log) ? parsed.log : [],
-      sync: parsed.sync && typeof parsed.sync === "object" ? parsed.sync : null
+      sync: parsed.sync && typeof parsed.sync === "object" ? parsed.sync : null,
+      syncWechat: parsed.syncWechat && typeof parsed.syncWechat === "object" ? parsed.syncWechat : null
     };
   } catch {
-    return { processed: [], pending: [], log: [], sync: null };
+    return { processed: [], pending: [], log: [], sync: null, syncWechat: null };
   }
 }
 
@@ -660,21 +661,22 @@ async function writeInbox(inbox) {
     log: inbox.log.slice(-INBOX_MAX_LOG)
   };
   if (inbox.sync && typeof inbox.sync === "object") next.sync = inbox.sync;
+  if (inbox.syncWechat && typeof inbox.syncWechat === "object") next.syncWechat = inbox.syncWechat;
   const filePath = inboxFilePath();
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(`${filePath}.tmp`, JSON.stringify(next, null, 2), "utf8");
   await fs.rename(`${filePath}.tmp`, filePath);
 }
 
-function buildSyncStatus(sync) {
+function buildSyncStatus(sync, name = "淘寶") {
   if (!sync?.lastHeartbeatAt) {
-    return { state: "offline", label: "淘寶同步未連線", detail: "", lastHeartbeatAt: null };
+    return { state: "offline", label: `${name}同步未連線`, detail: "", lastHeartbeatAt: null };
   }
   const ageMs = Date.now() - Date.parse(sync.lastHeartbeatAt);
   if (!Number.isFinite(ageMs) || ageMs > SYNC_STALE_MS) {
     return {
       state: "offline",
-      label: "淘寶同步未連線",
+      label: `${name}同步未連線`,
       detail: sync.detail || "",
       lastHeartbeatAt: sync.lastHeartbeatAt
     };
@@ -682,7 +684,7 @@ function buildSyncStatus(sync) {
   if (sync.ok === false) {
     return {
       state: "degraded",
-      label: "淘寶同步異常",
+      label: `${name}同步異常`,
       detail: sync.detail || "",
       lastHeartbeatAt: sync.lastHeartbeatAt,
       conversation: sync.conversation || ""
@@ -690,7 +692,7 @@ function buildSyncStatus(sync) {
   }
   return {
     state: "running",
-    label: "淘寶同步運作中",
+    label: `${name}同步運作中`,
     detail: sync.detail || "",
     lastHeartbeatAt: sync.lastHeartbeatAt,
     conversation: sync.conversation || ""
@@ -767,27 +769,90 @@ function applyInboundToData(data, items, nowIso) {
   const skipped = [];
 
   items.forEach(({ tracking, weight }) => {
-    const entries = index.get(tracking.toLowerCase()) || [];
+    const entries = index.get(String(tracking || "").toLowerCase()) || [];
     if (!entries.length) {
       missing.push(tracking);
       return;
     }
+    const hasWeight = Number.isFinite(weight);
     entries.forEach(({ friend, parcel }) => {
       if (parcel.status === "shipped_to_taiwan") {
         skipped.push(tracking);
         return;
       }
-      const changed = parcel.status !== "arrived_at_warehouse" || Number(parcel.weight_kg) !== weight;
-      parcel.weight_kg = weight;
+      const changed = parcel.status !== "arrived_at_warehouse"
+        || (hasWeight && Number(parcel.weight_kg) !== weight);
+      if (hasWeight) parcel.weight_kg = weight;
       if (parcel.status !== "arrived_at_warehouse") {
         parcel.status = "arrived_at_warehouse";
         parcel.arrived_at_warehouse_time = nowIso;
       }
-      if (changed) updated.push({ tracking, weight, owner: friend.name || "", remark: parcel.remark || "" });
+      if (changed) {
+        updated.push({
+          tracking,
+          weight: hasWeight ? weight : Number(parcel.weight_kg) || 0,
+          owner: friend.name || "",
+          remark: parcel.remark || ""
+        });
+      }
     });
   });
 
   return { updated, missing, skipped };
+}
+
+function normalizeLabelTrackings(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  list.forEach((value) => {
+    const tracking = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+    // WeChat labels are usually YT…; also accept common CN express shapes.
+    if (!/^(YT\d{10,}|[A-Z]{2}\d{8,40}|\d{10,20})$/.test(tracking)) return;
+    const key = tracking.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(tracking);
+  });
+  return out;
+}
+
+async function inboundLabelTrackings(trackings, source = "wechat") {
+  return withWriteLock(async () => {
+    const nowIso = new Date().toISOString();
+    const data = await readDataFile();
+    const items = trackings.map((tracking) => ({ tracking, weight: null }));
+    const result = applyInboundToData(data, items, nowIso);
+    if (result.updated.length) {
+      await backupCurrentDataFile();
+      await writeDataFile({ ...data, version: data.version + 1 });
+    }
+    const inbox = await readInbox();
+    if (result.updated.length || result.missing.length) {
+      const parts = [];
+      if (result.updated.length) {
+        parts.push(`${source === "wechat" ? "微信面單" : source}入庫 ${result.updated.length} 筆：${result.updated.map((u) => `${u.tracking} ${u.owner}`).join("、")}`);
+      }
+      if (result.missing.length) parts.push(`單號未key：${result.missing.join("、")}`);
+      if (result.skipped.length) parts.push(`已出轉運略過：${result.skipped.join("、")}`);
+      inbox.log.push({
+        at: nowIso,
+        message_ts: "",
+        type: "wechat_label",
+        text: parts.join("；") || `${source} 面單無變更`
+      });
+    }
+    inbox.syncWechat = {
+      ok: true,
+      detail: result.updated.length
+        ? `剛入庫 ${result.updated.length} 筆`
+        : (result.missing.length ? `未key ${result.missing.length} 筆` : "已掃過，無新入庫"),
+      conversation: source,
+      lastHeartbeatAt: nowIso
+    };
+    await writeInbox(inbox);
+    return { ...result, source };
+  });
 }
 
 // The forwarder sends the Taiwan number after payment, either before or after the shipment is confirmed in the app.
@@ -927,24 +992,43 @@ app.post("/api/inbox/heartbeat", requireInboxSecret, async (req, res) => {
   const ok = req.body?.ok !== false;
   const detail = String(req.body?.detail || "").trim().slice(0, 200);
   const conversation = String(req.body?.conversation || "").trim().slice(0, 100);
+  const channel = req.body?.channel === "wechat" ? "wechat" : "taobao";
+  const field = channel === "wechat" ? "syncWechat" : "sync";
+  const name = channel === "wechat" ? "微信" : "淘寶";
   try {
     const sync = await withWriteLock(async () => {
       const inbox = await readInbox();
-      inbox.sync = {
+      inbox[field] = {
         ok,
         detail,
         conversation,
         lastHeartbeatAt: new Date().toISOString()
       };
       await writeInbox(inbox);
-      return inbox.sync;
+      return inbox[field];
     });
-    return res.json({ ok: true, sync: buildSyncStatus(sync) });
+    return res.json({ ok: true, channel, sync: buildSyncStatus(sync, name) });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ ok: false, error: "HEARTBEAT_FAILED" });
   }
 });
+
+async function handleInboundLabels(req, res) {
+  const trackings = normalizeLabelTrackings(req.body?.trackings);
+  if (!trackings.length) return res.status(400).json({ ok: false, error: "NO_TRACKINGS" });
+  const source = String(req.body?.source || "wechat").trim().slice(0, 40) || "wechat";
+  try {
+    const result = await inboundLabelTrackings(trackings.slice(0, 200), source);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, error: "LABEL_INBOUND_FAILED" });
+  }
+}
+
+app.post("/api/inbox/labels", requireInboxSecret, handleInboundLabels);
+app.post("/api/order-tool/inbound-labels", requireAppAuth, handleInboundLabels);
 
 async function addTaobaoOrders(ownerName, orders) {
   return withWriteLock(async () => {
@@ -1021,7 +1105,8 @@ app.get("/api/inbox/state", requireAppAuth, async (_req, res) => {
       ok: true,
       pending: inbox.pending,
       log: inbox.log.slice(-20),
-      sync: buildSyncStatus(inbox.sync)
+      sync: buildSyncStatus(inbox.sync, "淘寶"),
+      syncWechat: buildSyncStatus(inbox.syncWechat, "微信")
     });
   } catch (error) {
     console.error(error);
