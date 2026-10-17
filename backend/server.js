@@ -637,6 +637,19 @@ function inboxFilePath() {
 }
 
 const SYNC_STALE_MS = 3 * 60 * 1000;
+const LINE_DEFAULT_INTERVAL_SEC = 900;
+const LINE_STALE_GRACE_SEC = 300;
+
+function normalizeLineIntervalSec(raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 60 || n > 86400) return LINE_DEFAULT_INTERVAL_SEC;
+  return n;
+}
+
+function lineStaleMs(sync) {
+  const intervalSec = normalizeLineIntervalSec(sync?.intervalSec);
+  return (intervalSec + LINE_STALE_GRACE_SEC) * 1000;
+}
 
 async function readInbox() {
   try {
@@ -670,19 +683,11 @@ async function writeInbox(inbox) {
   await fs.rename(`${filePath}.tmp`, filePath);
 }
 
-function buildSyncStatus(sync, name = "淘寶") {
+function buildSyncStatus(sync, name = "淘寶", staleMs = SYNC_STALE_MS) {
   if (!sync?.lastHeartbeatAt) {
     return { state: "offline", label: `${name}同步未連線`, detail: "", lastHeartbeatAt: null };
   }
-  const ageMs = Date.now() - Date.parse(sync.lastHeartbeatAt);
-  if (!Number.isFinite(ageMs) || ageMs > SYNC_STALE_MS) {
-    return {
-      state: "offline",
-      label: `${name}同步未連線`,
-      detail: sync.detail || "",
-      lastHeartbeatAt: sync.lastHeartbeatAt
-    };
-  }
+  // Failed heartbeat shows degraded immediately; do not wait for the next schedule.
   if (sync.ok === false) {
     return {
       state: "degraded",
@@ -690,6 +695,16 @@ function buildSyncStatus(sync, name = "淘寶") {
       detail: sync.detail || "",
       lastHeartbeatAt: sync.lastHeartbeatAt,
       conversation: sync.conversation || ""
+    };
+  }
+  const ageMs = Date.now() - Date.parse(sync.lastHeartbeatAt);
+  const limit = Number.isFinite(staleMs) && staleMs > 0 ? staleMs : SYNC_STALE_MS;
+  if (!Number.isFinite(ageMs) || ageMs > limit) {
+    return {
+      state: "offline",
+      label: `${name}同步未連線`,
+      detail: sync.detail || "",
+      lastHeartbeatAt: sync.lastHeartbeatAt
     };
   }
   return {
@@ -1010,16 +1025,21 @@ app.post("/api/inbox/heartbeat", requireInboxSecret, async (req, res) => {
   try {
     const sync = await withWriteLock(async () => {
       const inbox = await readInbox();
-      inbox[field] = {
+      const entry = {
         ok,
         detail,
         conversation,
         lastHeartbeatAt: new Date().toISOString()
       };
+      if (channel === "line") {
+        entry.intervalSec = normalizeLineIntervalSec(req.body?.intervalSec);
+      }
+      inbox[field] = entry;
       await writeInbox(inbox);
       return inbox[field];
     });
-    return res.json({ ok: true, channel, sync: buildSyncStatus(sync, name) });
+    const staleMs = channel === "line" ? lineStaleMs(sync) : SYNC_STALE_MS;
+    return res.json({ ok: true, channel, sync: buildSyncStatus(sync, name, staleMs) });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ ok: false, error: "HEARTBEAT_FAILED" });
@@ -1129,9 +1149,9 @@ app.get("/api/inbox/state", requireAppAuth, async (_req, res) => {
       ok: true,
       pending: inbox.pending,
       log: inbox.log.slice(-20),
-      sync: buildSyncStatus(inbox.sync, "淘寶"),
-      syncWechat: buildSyncStatus(inbox.syncWechat, "微信"),
-      syncLine: buildSyncStatus(inbox.syncLine, "LINE記事本")
+      sync: buildSyncStatus(inbox.sync, "淘寶", SYNC_STALE_MS),
+      syncWechat: buildSyncStatus(inbox.syncWechat, "微信", SYNC_STALE_MS),
+      syncLine: buildSyncStatus(inbox.syncLine, "LINE記事本", lineStaleMs(inbox.syncLine))
     });
   } catch (error) {
     console.error(error);
