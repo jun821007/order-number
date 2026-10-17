@@ -270,6 +270,49 @@ async function selectTargetConversation(wsUrl) {
   return false;
 }
 
+function isLoginPage(page) {
+  return page.type === "page" && (
+    page.url.includes("loginPop")
+    || page.url.includes("login.taobao.com")
+    || /登陆|登錄|登录/.test(page.title || "")
+  );
+}
+
+const LOGIN_CLICK_EXPRESSION = `(() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+  };
+  // 1) desktop reward popup 「立即登录」  2) havana confirm page 「快速进入」
+  const btn = (visible(document.querySelector(".login-btn-in")) && document.querySelector(".login-btn-in"))
+    || (visible(document.querySelector("button.fm-button.fm-submit")) && document.querySelector("button.fm-button.fm-submit"))
+    || [...document.querySelectorAll("button,a,div.fm-btn,div.login-btn-in")].find((el) => {
+      const t = (el.innerText || "").trim();
+      return visible(el) && (/^立即登[录錄入]$/.test(t) || /^快速进入$/.test(t) || /^快速進入$/.test(t));
+    });
+  if (!btn) return JSON.stringify({ ok: false, reason: "no-btn", hasQuick: /快速进入|快速進入/.test(document.body?.innerText || ""), hasNow: /立即登/.test(document.body?.innerText || "") });
+  btn.click();
+  return JSON.stringify({ ok: true, text: (btn.innerText || "").trim().replace(/\\s+/g, "") });
+})()`;
+
+const LOGIN_VISIBLE_EXPRESSION = `JSON.stringify({
+  visible: (() => {
+    const nodes = [
+      document.querySelector(".login-btn-in"),
+      document.querySelector("button.fm-button.fm-submit"),
+      ...document.querySelectorAll("button,a,div")
+    ].filter(Boolean);
+    return nodes.some((el) => {
+      const t = (el.innerText || "").trim();
+      if (!(/^立即登[录錄入]$/.test(t) || /^快速进入$/.test(t) || /^快速進入$/.test(t))) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+  })()
+})`;
+
 async function clickImmediateLogin() {
   let targets;
   try {
@@ -277,31 +320,16 @@ async function clickImmediateLogin() {
   } catch {
     return false;
   }
-  const loginPages = targets.filter((t) => t.type === "page" && (
-    t.url.includes("loginPop") || /登陆|登錄|登录/i.test(t.title || "")
-  ));
+  const loginPages = targets.filter(isLoginPage);
   if (!loginPages.length) return false;
-
-  // Only click when the button is actually visible (ignore stale/hidden loginPop pages).
-  const expression = `(() => {
-    const btn = document.querySelector(".login-btn-in")
-      || [...document.querySelectorAll("button,a,div,span")].find((el) => /立即登[录錄入]/.test((el.innerText || "").trim()));
-    if (!btn) return JSON.stringify({ ok: false, reason: "no-btn" });
-    const rect = btn.getBoundingClientRect();
-    const style = getComputedStyle(btn);
-    const visible = rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
-    if (!visible) return JSON.stringify({ ok: false, reason: "hidden" });
-    btn.click();
-    return JSON.stringify({ ok: true, text: (btn.innerText || "").trim() });
-  })()`;
 
   let clicked = false;
   for (const page of loginPages) {
     try {
-      const raw = await evaluateInPage(page.webSocketDebuggerUrl, expression);
+      const raw = await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_CLICK_EXPRESSION);
       const result = JSON.parse(raw);
       if (result.ok) {
-        log(`已自動點「${result.text || "立即登入"}」`);
+        log(`已自動點「${result.text || "登入"}」`);
         clicked = true;
         break;
       }
@@ -311,23 +339,20 @@ async function clickImmediateLogin() {
   }
   if (!clicked) return false;
 
-  // After login the app may briefly restart; wait for debug port and for the visible button to disappear.
-  for (let i = 0; i < 30; i++) {
+  // After login the app may briefly restart; wait for debug port and for login buttons to disappear.
+  for (let i = 0; i < 40; i++) {
     await sleep(1000);
     try {
       await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`, { signal: AbortSignal.timeout(2000) });
       const pages = await listDebugPages();
-      const pop = pages.find((t) => t.type === "page" && t.url.includes("loginPop"));
-      if (!pop) return true;
-      const state = JSON.parse(await evaluateInPage(pop.webSocketDebuggerUrl, `JSON.stringify({
-        visible: (() => {
-          const btn = document.querySelector(".login-btn-in");
-          if (!btn) return false;
-          const rect = btn.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        })()
-      })`));
-      if (!state.visible) return true;
+      const pops = pages.filter(isLoginPage);
+      if (!pops.length) return true;
+      let anyVisible = false;
+      for (const pop of pops) {
+        const state = JSON.parse(await evaluateInPage(pop.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
+        if (state.visible) anyVisible = true;
+      }
+      if (!anyVisible) return true;
     } catch {
       // port down while app settles after login
     }
@@ -339,16 +364,9 @@ async function waitForLoginPopup(maxSeconds = 15) {
   for (let i = 0; i < maxSeconds; i++) {
     try {
       const pages = await listDebugPages();
-      for (const page of pages.filter((t) => t.type === "page" && t.url.includes("loginPop"))) {
-        const raw = await evaluateInPage(page.webSocketDebuggerUrl, `JSON.stringify({
-          visible: (() => {
-            const btn = document.querySelector(".login-btn-in");
-            if (!btn) return false;
-            const rect = btn.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-          })()
-        })`);
-        if (JSON.parse(raw).visible) return true;
+      for (const page of pages.filter(isLoginPage)) {
+        const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
+        if (state.visible) return true;
       }
     } catch {
       // not ready
