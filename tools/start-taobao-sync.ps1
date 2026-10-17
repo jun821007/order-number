@@ -25,11 +25,23 @@ if (-not (Test-Path $configFile)) {
     node $syncScript --set-secret
 }
 
-if (Test-DebugPort) {
+function Test-UsableUi {
+    try {
+        $pages = (Invoke-WebRequest "http://127.0.0.1:$debugPort/json/list" -UseBasicParsing -TimeoutSec 3).Content | ConvertFrom-Json
+        foreach ($p in $pages) {
+            if ($p.type -eq "page" -and $p.url -match "^https?://") { return $true }
+        }
+        return $false
+    } catch {
+        return $false
+    }
+}
+
+if ((Test-DebugPort) -and (Test-UsableUi)) {
     Write-Host "[1/4] 淘寶桌面版已是同步模式" -ForegroundColor Green
 } else {
     if (Get-Process "淘宝桌面版") {
-        Write-Host "[1/4] 淘寶桌面版不是同步模式，重新開啟中…" -ForegroundColor Yellow
+        Write-Host "[1/4] 淘寶主視窗已關或不是同步模式，重新開啟中…" -ForegroundColor Yellow
         Get-Process "淘宝桌面版" | Stop-Process -Force
         Start-Sleep -Seconds 3
     } else {
@@ -37,9 +49,9 @@ if (Test-DebugPort) {
     }
     Start-Process -FilePath $taobaoExe -ArgumentList "--remote-debugging-port=$debugPort"
     $ready = $false
-    for ($i = 0; $i -lt 30; $i++) {
+    for ($i = 0; $i -lt 45; $i++) {
         Start-Sleep -Seconds 1
-        if (Test-DebugPort) { $ready = $true; break }
+        if ((Test-DebugPort) -and (Test-UsableUi)) { $ready = $true; break }
     }
     if ($ready) {
         Write-Host "      淘寶桌面版已開啟" -ForegroundColor Green

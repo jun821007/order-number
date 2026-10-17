@@ -21,7 +21,7 @@ const TARGET_CONVERSATION = process.env.TAOBAO_TARGET_CONVERSATION || "捷豹國
 const CHAT_URL = process.env.TAOBAO_CHAT_URL
   || "https://market.m.taobao.com/app/im/chat-core/index.html?spm=tbpcclient.personal_index.sidebar.message#/";
 const ENSURE_TASK_NAME = process.env.TAOBAO_ENSURE_TASK || "OrderNumberEnsureTaobao";
-const RELAUNCH_COOLDOWN_MS = Number(process.env.TAOBAO_RELAUNCH_COOLDOWN_MS || 2 * 60 * 1000);
+const RELAUNCH_COOLDOWN_MS = Number(process.env.TAOBAO_RELAUNCH_COOLDOWN_MS || 45 * 1000);
 const POLL_MS = Number(process.env.TAOBAO_POLL_MS || 15000);
 const ORDER_POLL_MS = Number(process.env.TAOBAO_ORDER_POLL_MS || 60 * 60 * 1000);
 const ORDER_OWNER = process.env.TAOBAO_ORDER_OWNER || "鈞";
@@ -108,6 +108,21 @@ async function listDebugPages() {
   return res.json();
 }
 
+/** True when at least one real web page exists (home/chat/login). file:// + about:blank only = shell after user closed the main window. */
+function hasUsableTaobaoUi(targets) {
+  return (targets || []).some((t) => t.type === "page" && /^https?:\/\//i.test(t.url || ""));
+}
+
+async function probeTaobao() {
+  try {
+    const targets = await listDebugPages();
+    if (!hasUsableTaobaoUi(targets)) return { error: "TAOBAO_SHELL_ONLY", targets };
+    return { targets };
+  } catch {
+    return { error: "TAOBAO_NOT_RUNNING" };
+  }
+}
+
 async function inspectChatPage(page) {
   try {
     const raw = await evaluateInPage(page.webSocketDebuggerUrl, `JSON.stringify({
@@ -169,14 +184,18 @@ async function findChatPage() {
 
 let lastRelaunchAt = 0;
 
-async function relaunchTaobaoDesktop() {
+async function relaunchTaobaoDesktop(reason = "closed") {
   const now = Date.now();
   if (now - lastRelaunchAt < RELAUNCH_COOLDOWN_MS) {
     log("淘寶桌面版剛重開過，稍後再試");
     return false;
   }
   lastRelaunchAt = now;
-  log("淘寶桌面版已關閉或不是同步模式，正在自動重開…");
+  if (reason === "shell") {
+    log("淘寶主視窗已關（只剩背景程序），正在強制重開…");
+  } else {
+    log("淘寶桌面版已關閉或不是同步模式，正在自動重開…");
+  }
   try {
     await execFileAsync("schtasks.exe", ["/Run", "/TN", ENSURE_TASK_NAME], { windowsHide: true });
     log(`已觸發重開排程 ${ENSURE_TASK_NAME}`);
@@ -184,14 +203,12 @@ async function relaunchTaobaoDesktop() {
     log(`自動重開失敗：${error.message}`);
     return false;
   }
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 55; i++) {
     await sleep(1000);
-    try {
-      await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`, { signal: AbortSignal.timeout(2000) });
+    const probe = await probeTaobao();
+    if (!probe.error) {
       log("淘寶桌面版已重新開啟（同步模式）");
       return true;
-    } catch {
-      // keep waiting
     }
   }
   log("自動重開逾時：請手動點桌面「淘寶同步」捷徑");
@@ -383,15 +400,7 @@ async function waitForLoginPopup(maxSeconds = 15) {
   return false;
 }
 
-async function ensureChatReady() {
-  let found = await findChatPage();
-  if (found.error === "TAOBAO_NOT_RUNNING") {
-    if (!(await relaunchTaobaoDesktop())) return found;
-    await sleep(4000);
-  }
-
-  // Clear login gates first (立即登录 / 快速进入). Chat tabs may already exist in the background
-  // while the confirm-login page is still in front — so always try before treating chat as ready.
+async function clearLoginGates() {
   await waitForLoginPopup(8);
   try {
     await clickImmediateLogin();
@@ -401,15 +410,33 @@ async function ensureChatReady() {
   } catch (error) {
     log(`自動登入點擊失敗：${error.message}`);
   }
+}
 
-  found = await findChatPage();
+async function ensureChatReady() {
+  let probe = await probeTaobao();
+  if (probe.error === "TAOBAO_NOT_RUNNING" || probe.error === "TAOBAO_SHELL_ONLY") {
+    if (!(await relaunchTaobaoDesktop(probe.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed"))) {
+      return { error: "TAOBAO_NOT_RUNNING" };
+    }
+    await sleep(4000);
+  }
+
+  // Clear login gates first (立即登录 / 快速进入). Chat tabs may already exist in the background
+  // while the confirm-login page is still in front — so always try before treating chat as ready.
+  await clearLoginGates();
+
+  let found = await findChatPage();
   if (found.error === "TAOBAO_NOT_RUNNING") {
-    if (await relaunchTaobaoDesktop()) {
+    if (await relaunchTaobaoDesktop("closed")) {
       await sleep(4000);
-      await waitForLoginPopup(12);
-      await clickImmediateLogin();
-      await waitForLoginPopup(8);
-      await clickImmediateLogin();
+      await clearLoginGates();
+      found = await findChatPage();
+    }
+  } else {
+    probe = await probeTaobao();
+    if (probe.error === "TAOBAO_SHELL_ONLY" && await relaunchTaobaoDesktop("shell")) {
+      await sleep(4000);
+      await clearLoginGates();
       found = await findChatPage();
     }
   }
@@ -438,11 +465,25 @@ async function ensureChatReady() {
       if (await openChatPageViaNavigate()) {
         found = await findChatPage();
       } else {
+        const again = await probeTaobao();
+        if (again.error === "TAOBAO_SHELL_ONLY" || again.error === "TAOBAO_NOT_RUNNING") {
+          if (await relaunchTaobaoDesktop(again.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed")) {
+            await sleep(4000);
+            await clearLoginGates();
+            return await findChatPage();
+          }
+        }
         log("自動打開聊天頁失敗，請在淘寶點「消息」");
         return found;
       }
     } catch (error) {
       log(`自動打開聊天頁失敗：${error.message}`);
+      const again = await probeTaobao();
+      if (again.error && await relaunchTaobaoDesktop(again.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed")) {
+        await sleep(4000);
+        await clearLoginGates();
+        return await findChatPage();
+      }
       return found;
     }
   }
