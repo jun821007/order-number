@@ -5,8 +5,9 @@ Thumbs.db
 # Local config override
 app-config.local.js
 
-# Backend
+# Backend / desktop tools
 backend/node_modules/
+tools/node_modules/
 backend/.env
 backend/.env.*
 backend/storage/*.tmp
