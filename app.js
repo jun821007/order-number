@@ -2208,11 +2208,11 @@ async function fetchInboxState() {
 function formatInboxLogText(entry) {
   const text = String(entry?.text || "");
   if (/^(淘寶|LINE)\//.test(text)) return text;
-  if (/LINE記事本|微信面單/.test(text) || entry?.type === "wechat_label") {
-    const body = text
-      .replace(/^LINE記事本自動新增\s*/, "記事本自動新增 ")
-      .replace(/^微信面單入庫\s*/, "入庫 ");
-    return `LINE/${body}`;
+  if (/LINE記事本/.test(text)) {
+    return `LINE/${text.replace(/^LINE記事本自動新增\s*/, "記事本自動新增 ")}`;
+  }
+  if (/微信面單/.test(text) || entry?.type === "wechat_label") {
+    return `微信/${text.replace(/^微信面單入庫\s*/, "入庫 ")}`;
   }
   if (
     entry?.type === "inbound"
