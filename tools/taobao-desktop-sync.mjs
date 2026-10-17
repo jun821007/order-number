@@ -285,14 +285,21 @@ const LOGIN_CLICK_EXPRESSION = `(() => {
     const style = getComputedStyle(el);
     return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
   };
-  // 1) desktop reward popup 「立即登录」  2) havana confirm page 「快速进入」
-  const btn = (visible(document.querySelector(".login-btn-in")) && document.querySelector(".login-btn-in"))
-    || (visible(document.querySelector("button.fm-button.fm-submit")) && document.querySelector("button.fm-button.fm-submit"))
-    || [...document.querySelectorAll("button,a,div.fm-btn,div.login-btn-in")].find((el) => {
-      const t = (el.innerText || "").trim();
-      return visible(el) && (/^立即登[录錄入]$/.test(t) || /^快速进入$/.test(t) || /^快速進入$/.test(t));
-    });
-  if (!btn) return JSON.stringify({ ok: false, reason: "no-btn", hasQuick: /快速进入|快速進入/.test(document.body?.innerText || ""), hasNow: /立即登/.test(document.body?.innerText || "") });
+  const body = document.body?.innerText || "";
+  const href = location.href || "";
+  let btn = null;
+  // Havana confirm-login page (QR + 快速进入) — this is the step that often blocks automation.
+  if (href.includes("login.taobao.com") && /快速进入|快速進入/.test(body)) {
+    btn = document.querySelector("button.fm-button.fm-submit")
+      || [...document.querySelectorAll("button")].find((el) => /^快速进入$|^快速進入$/.test((el.innerText || "").trim()));
+  }
+  // Desktop reward popup 「立即登录」
+  if (!btn && href.includes("loginPop") && /立即登/.test(body)) {
+    btn = document.querySelector(".login-btn-in");
+  }
+  if (!btn || !visible(btn)) {
+    return JSON.stringify({ ok: false, reason: "no-btn", href: href.slice(0, 80) });
+  }
   btn.click();
   return JSON.stringify({ ok: true, text: (btn.innerText || "").trim().replace(/\\s+/g, "") });
 })()`;
@@ -378,8 +385,36 @@ async function waitForLoginPopup(maxSeconds = 15) {
 
 async function ensureChatReady() {
   let found = await findChatPage();
+  if (found.error === "TAOBAO_NOT_RUNNING") {
+    if (!(await relaunchTaobaoDesktop())) return found;
+    await sleep(4000);
+  }
 
-  // Already on a usable chat page — never touch the login popup again.
+  // Clear login gates first (立即登录 / 快速进入). Chat tabs may already exist in the background
+  // while the confirm-login page is still in front — so always try before treating chat as ready.
+  await waitForLoginPopup(8);
+  try {
+    await clickImmediateLogin();
+    // There can be two steps in a row: 立即登录 → 快速进入
+    await waitForLoginPopup(8);
+    await clickImmediateLogin();
+  } catch (error) {
+    log(`自動登入點擊失敗：${error.message}`);
+  }
+
+  found = await findChatPage();
+  if (found.error === "TAOBAO_NOT_RUNNING") {
+    if (await relaunchTaobaoDesktop()) {
+      await sleep(4000);
+      await waitForLoginPopup(12);
+      await clickImmediateLogin();
+      await waitForLoginPopup(8);
+      await clickImmediateLogin();
+      found = await findChatPage();
+    }
+  }
+
+  // Usable chat already open — just make sure Jaguar is selected.
   if (found.page && found.info?.convCount > 0) {
     if (found.info.active === TARGET_CONVERSATION) return found;
     try {
@@ -395,39 +430,6 @@ async function ensureChatReady() {
       log(`檢查對話失敗：${error.message}`);
     }
     return found;
-  }
-
-  if (found.error === "TAOBAO_NOT_RUNNING") {
-    if (!(await relaunchTaobaoDesktop())) return found;
-    await sleep(4000);
-    // Fresh start often shows 「立即登录」 first.
-    await waitForLoginPopup(12);
-    try {
-      await clickImmediateLogin();
-    } catch (error) {
-      log(`自動登入點擊失敗：${error.message}`);
-    }
-    found = await findChatPage();
-  }
-
-  // Chat missing but app is up — login popup may be blocking; click once, then open messages.
-  if (found.error === "CHAT_NOT_OPEN" || (found.page && !(found.info?.convCount > 0))) {
-    await waitForLoginPopup(5);
-    try {
-      await clickImmediateLogin();
-    } catch (error) {
-      log(`自動登入點擊失敗：${error.message}`);
-    }
-    found = await findChatPage();
-  }
-
-  if (found.error === "TAOBAO_NOT_RUNNING") {
-    if (await relaunchTaobaoDesktop()) {
-      await sleep(4000);
-      await waitForLoginPopup(12);
-      await clickImmediateLogin();
-      found = await findChatPage();
-    }
   }
 
   if (found.error === "CHAT_NOT_OPEN") {
