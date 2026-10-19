@@ -618,6 +618,7 @@ const INBOX_MAX_PROCESSED = 5000;
 const INBOX_MAX_LOG = 100;
 const INBOX_ADDRESS_WINDOW_MS = 60 * 60 * 1000;
 
+const UNASSIGNED_OWNER_NAME = "未分件主";
 const INBOX_WEIGHT_LINE = /^(\d+(?:\.\d+)?)\s*(?:kg|公斤)?\s+([A-Za-z0-9]{6,})(?:\s+.*)?$/i;
 const INBOX_PAY_LINE = /^拍\s*[:：]?\s*(\d+(?:\.\d+)?)/;
 const INBOX_TOTAL_LINE = /^(?:合计|合計)\s*[:：]?\s*(\d+(?:\.\d+)?)/;
@@ -818,6 +819,53 @@ function applyInboundToData(data, items, nowIso) {
   return { updated, missing, skipped };
 }
 
+function ensureUnassignedOwner(data) {
+  const existing = data.friends.find((friend) => (friend.name || "").trim() === UNASSIGNED_OWNER_NAME);
+  if (existing) {
+    if (!Array.isArray(existing.parcels)) existing.parcels = [];
+    return existing;
+  }
+  const owner = {
+    id: crypto.randomUUID(),
+    name: UNASSIGNED_OWNER_NAME,
+    receipt_info: { name: "", phone: "", address: "", id_number: "" },
+    shipping_profiles: {
+      convenience_list: [],
+      address_list: []
+    },
+    parcels: []
+  };
+  data.friends.push(owner);
+  return owner;
+}
+
+function createUnassignedInboundParcels(data, items, arrivedIso, createdIso) {
+  const index = buildServerTrackingIndex(data);
+  const created = [];
+  items.forEach(({ tracking, weight }) => {
+    const raw = String(tracking || "").trim();
+    const key = raw.toLowerCase();
+    if (!key || index.has(key)) return;
+    const owner = ensureUnassignedOwner(data);
+    const parcel = {
+      id: crypto.randomUUID(),
+      tracking_id_china: raw,
+      remark: "",
+      status: "arrived_at_warehouse",
+      shipping_priority: "normal",
+      weight_kg: Number.isFinite(weight) ? weight : 0,
+      taiwan_parcel_group_id: null,
+      created_at: createdIso,
+      arrived_at_warehouse_time: arrivedIso,
+      shipped_to_taiwan_time: null
+    };
+    owner.parcels.push(parcel);
+    index.set(key, [{ friend: owner, parcel }]);
+    created.push({ tracking: raw, weight: parcel.weight_kg, owner: owner.name });
+  });
+  return created;
+}
+
 function normalizeLabelTrackings(raw) {
   const list = Array.isArray(raw) ? raw : [];
   const out = [];
@@ -919,14 +967,30 @@ async function processInboxMessages(messages) {
       if (parsed.type === "inbound") {
         data = data || await readDataFile();
         const result = applyInboundToData(data, parsed.items, nowIso);
-        if (result.updated.length) dataChanged = true;
-        summary.inbound += result.updated.length;
-        if (result.updated.length || result.missing.length) {
+        const arrivedIso = new Date(messageAt).toISOString();
+        const missingKeys = new Set(result.missing.map((tracking) => String(tracking || "").toLowerCase()));
+        const missingItems = parsed.items.filter((item) => missingKeys.has(String(item.tracking || "").toLowerCase()));
+        const created = createUnassignedInboundParcels(data, missingItems, arrivedIso, nowIso);
+        const createdKeys = new Set(created.map((item) => item.tracking.toLowerCase()));
+        const stillMissing = [];
+        const seenMissing = new Set();
+        result.missing.forEach((tracking) => {
+          const key = String(tracking || "").toLowerCase();
+          if (!key || createdKeys.has(key) || seenMissing.has(key)) return;
+          seenMissing.add(key);
+          stillMissing.push(tracking);
+        });
+        if (result.updated.length || created.length) dataChanged = true;
+        summary.inbound += result.updated.length + created.length;
+        if (result.updated.length || created.length || stillMissing.length) {
           const parts = [];
           if (result.updated.length) {
             parts.push(`淘寶/自動入庫 ${result.updated.length} 筆：${result.updated.map((u) => `${u.weight.toFixed(1)} ${u.tracking} ${u.owner}`).join("、")}`);
           }
-          if (result.missing.length) parts.push(`淘寶/單號未key：${result.missing.join("、")}`);
+          if (created.length) {
+            parts.push(`淘寶/未分件主入倉 ${created.length} 筆：${created.map((item) => `${Number(item.weight).toFixed(1)} ${item.tracking}`).join("、")}`);
+          }
+          if (stillMissing.length) parts.push(`淘寶/單號未key：${stillMissing.join("、")}`);
           inbox.log.push({ at: nowIso, message_ts: message.ts, type: "inbound", text: parts.join("；") });
         }
       } else if (parsed.type === "quote") {

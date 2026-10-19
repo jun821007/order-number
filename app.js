@@ -1128,6 +1128,28 @@ function addFriend() {
   persistAndRender("已新增朋友");
 }
 
+const UNASSIGNED_OWNER_NAME = "未分件主";
+
+function isUnassignedOwner(friend) {
+  return (friend?.name || "").trim() === UNASSIGNED_OWNER_NAME;
+}
+
+function splitUnassignedTargets(parcels) {
+  const blocked = [];
+  const allowed = [];
+  (parcels || []).forEach((parcel) => {
+    const owner = findParcelOwnerById(parcel.id);
+    if (isUnassignedOwner(owner?.friend)) blocked.push(parcel);
+    else allowed.push(parcel);
+  });
+  return { blocked, allowed };
+}
+
+function unassignedShipNotice(parcels) {
+  const ids = [...new Set((parcels || []).map((parcel) => parcel.tracking_id_china).filter(Boolean))];
+  return `還在未分件主，請先 key 到件主${ids.length ? `：${ids.join("、")}` : ""}`;
+}
+
 function addBulkParcels() {
   const friend = state.data.friends.find((f) => f.id === state.bulkTargetFriendId);
   if (!friend) return toast("請先選擇朋友");
@@ -1135,19 +1157,13 @@ function addBulkParcels() {
   const lines = els.bulkInput.value.split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return toast("請先輸入至少一筆單號");
 
-  const trackingOwnerMap = new Map();
-  state.data.friends.forEach((f) => {
-    f.parcels.forEach((parcel) => {
-      const key = (parcel.tracking_id_china || "").toLowerCase();
-      if (!key || trackingOwnerMap.has(key)) return;
-      trackingOwnerMap.set(key, f.name || "-");
-    });
-  });
+  const trackingIndex = buildTrackingIndex();
 
   const batchSeen = new Set();
   const duplicated = [];
   let inserted = 0;
   let directArrived = 0;
+  let moved = 0;
 
   lines.forEach((line) => {
     const parts = line.split(/\s+/).filter(Boolean);
@@ -1185,12 +1201,26 @@ function addBulkParcels() {
     }
     batchSeen.add(key);
 
-    if (trackingOwnerMap.has(key)) {
-      duplicated.push(`${tracking}（已存在：${trackingOwnerMap.get(key)}）`);
+    const entries = trackingIndex.get(key) || [];
+    if (entries.length) {
+      const onlyUnassigned = entries.every(({ friend: owner }) => isUnassignedOwner(owner));
+      if (onlyUnassigned && !isUnassignedOwner(friend)) {
+        if (hasWeightPrefix) directArrived -= 1;
+        entries.forEach(({ friend: source, parcel }) => {
+          source.parcels = source.parcels.filter((item) => item.id !== parcel.id);
+          if (remark) parcel.remark = remark;
+          friend.parcels.push(parcel);
+        });
+        trackingIndex.set(key, entries.map(({ parcel }) => ({ friend, parcel })));
+        moved += entries.length;
+        return;
+      }
+      const other = entries.find(({ friend: owner }) => !isUnassignedOwner(owner)) || entries[0];
+      duplicated.push(`${tracking}（已存在：${other.friend.name || "-"}）`);
       return;
     }
 
-    friend.parcels.push({
+    const parcel = {
       id: uid(),
       tracking_id_china: tracking,
       remark,
@@ -1201,12 +1231,13 @@ function addBulkParcels() {
       created_at: nowIso(),
       arrived_at_warehouse_time: arrivedTime,
       shipped_to_taiwan_time: null
-    });
-    trackingOwnerMap.set(key, friend.name || "-");
+    };
+    friend.parcels.push(parcel);
+    trackingIndex.set(key, [{ friend, parcel }]);
     inserted += 1;
   });
 
-  if (!inserted) {
+  if (!inserted && !moved) {
     if (duplicated.length) {
       const preview = duplicated.slice(0, 5).join("、");
       return toast(`沒有新增，單號重複：${preview}${duplicated.length > 5 ? "..." : ""}`);
@@ -1216,7 +1247,11 @@ function addBulkParcels() {
 
   state.selectedFriendId = friend.id;
   els.bulkInput.value = "";
-  persistAndRender(`已新增 ${inserted} 筆（直接入轉運倉 ${directArrived} 筆）${duplicated.length ? `，略過重複 ${duplicated.length} 筆` : ""}`);
+  const summary = [];
+  if (inserted) summary.push(`已新增 ${inserted} 筆（直接入轉運倉 ${directArrived} 筆）`);
+  if (moved) summary.push(`從未分件主搬走 ${moved} 筆`);
+  if (duplicated.length) summary.push(`略過重複 ${duplicated.length} 筆`);
+  persistAndRender(summary.join("，"));
 }
 
 function runBulkInbound() {
@@ -2080,14 +2115,21 @@ function markSelectedShipped() {
   });
   if (!selected.length) return toast("請先勾選單號");
 
-  let targets = selected;
-  const alreadyShipped = selected.filter((parcel) => parcel.status === "shipped_to_taiwan");
+  const { blocked, allowed } = splitUnassignedTargets(selected);
+  if (!allowed.length) {
+    confirm(`${unassignedShipNotice(blocked)}\n\n這次不會出貨。`);
+    return;
+  }
+  if (blocked.length && !confirm(`${unassignedShipNotice(blocked)}\n\n其餘 ${allowed.length} 筆繼續出貨？`)) return;
+
+  let targets = allowed;
+  const alreadyShipped = targets.filter((parcel) => parcel.status === "shipped_to_taiwan");
   if (alreadyShipped.length) {
     const moveToo = confirm(
       `選取中有 ${alreadyShipped.length} 筆已經是「已出轉運」（屬於其他台灣單號）。\n\n` +
-      `按「確定」：一起移到這次的新單\n按「取消」：只處理未出轉運的 ${selected.length - alreadyShipped.length} 筆`
+      `按「確定」：一起移到這次的新單\n按「取消」：只處理未出轉運的 ${allowed.length - alreadyShipped.length} 筆`
     );
-    if (!moveToo) targets = selected.filter((parcel) => parcel.status !== "shipped_to_taiwan");
+    if (!moveToo) targets = allowed.filter((parcel) => parcel.status !== "shipped_to_taiwan");
   }
   if (!targets.length) return toast("沒有需要標記的單號");
 
@@ -2157,12 +2199,18 @@ function promptShipmentDetails(defaults = {}) {
 }
 
 function shipParcels(targets, details) {
+  const { blocked, allowed } = splitUnassignedTargets(targets);
+  if (!allowed.length) {
+    toast(blocked.length ? `${unassignedShipNotice(blocked)}。這次不會出貨。` : "沒有需要標記的單號");
+    return;
+  }
+
   const group = upsertTaiwanGroupByTracking(details.taiwanTrackingId);
   group.settlement_total_cny = Number(details.cny.toFixed(2));
   group.settlement_total_twd = Number(details.twd.toFixed(2));
   group.shipping_method = details.shippingMethod;
   group.shipping_address = details.shippingAddress;
-  targets.forEach((parcel) => {
+  allowed.forEach((parcel) => {
     parcel.status = "shipped_to_taiwan";
     parcel.taiwan_parcel_group_id = group.id;
     if (!parcel.shipped_to_taiwan_time) parcel.shipped_to_taiwan_time = nowIso();
@@ -2170,7 +2218,9 @@ function shipParcels(targets, details) {
   });
 
   state.selectedParcelIds.clear();
-  persistAndRender("已更新為已出轉運");
+  persistAndRender(blocked.length
+    ? `已更新為已出轉運；${unassignedShipNotice(blocked)}`
+    : "已更新為已出轉運");
 }
 
 function applySyncPill(el, sync) {
@@ -2245,6 +2295,7 @@ function confirmPendingShipment(pending) {
   const targets = [];
   const missing = [];
   const alreadyShipped = [];
+  const unassigned = [];
 
   pending.items.forEach((item) => {
     const entries = index.get(item.tracking.toLowerCase()) || [];
@@ -2252,17 +2303,28 @@ function confirmPendingShipment(pending) {
       missing.push(item.tracking);
       return;
     }
-    entries.forEach(({ parcel }) => {
+    entries.forEach(({ friend, parcel }) => {
       if (parcel.status === "shipped_to_taiwan") alreadyShipped.push(item.tracking);
+      else if (isUnassignedOwner(friend)) unassigned.push(item.tracking);
       else targets.push({ parcel, weight: item.weight });
     });
   });
 
+  const uniqueList = (list) => [...new Set(list)];
   if (!targets.length) {
+    if (unassigned.length) {
+      const lines = [`還在未分件主，請先 key 到件主：${uniqueList(unassigned).join("、")}`];
+      if (alreadyShipped.length) lines.push(`已出轉運：${uniqueList(alreadyShipped).join("、")}`);
+      if (missing.length) lines.push(`還沒 key：${uniqueList(missing).join("、")}`);
+      lines.push("這次不會出貨。");
+      confirm(lines.join("\n"));
+      return;
+    }
     if (confirm("這筆報價的單號都已出轉運或還沒 key，要直接略過嗎？")) resolvePendingShipment(pending.id, "dismissed");
     return;
   }
   const notes = [];
+  if (unassigned.length) notes.push(`還在未分件主，請先 key 到件主：${uniqueList(unassigned).join("、")}`);
   if (missing.length) notes.push(`還沒 key：${missing.join("、")}`);
   if (alreadyShipped.length) notes.push(`已出轉運：${alreadyShipped.join("、")}`);
   if (notes.length && !confirm(`${notes.join("\n")}\n\n其餘 ${targets.length} 筆照常出貨？`)) return;
