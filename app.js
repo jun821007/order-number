@@ -2215,6 +2215,7 @@ function promptShipmentDetails(defaults = {}) {
     return null;
   }
 
+  // paid_twd is the Taobao card charge, not this manual settlement total.
   const twdRaw = prompt("輸入台幣總金額（必填）：", "");
   if (twdRaw === null) {
     toast("已略過操作");
@@ -2432,7 +2433,12 @@ function renderInbox() {
 
     const meta = document.createElement("div");
     meta.className = "inbox-pending-meta";
-    meta.textContent = `合計 ${item.total_weight ?? "-"}kg｜人民幣 ${item.cny ?? "未抓到"}｜地址：${item.address || "未抓到"}｜台灣單號：${item.taiwan_tracking || "還沒收到"}`;
+    const paidTwd = Number(item.paid_twd);
+    const paidRate = Number(item.paid_rate);
+    const paidText = Number.isFinite(paidTwd)
+      ? `｜已付台幣 ${paidTwd}${Number.isFinite(paidRate) ? `（匯率 ${paidRate}）` : ""}`
+      : "";
+    meta.textContent = `合計 ${item.total_weight ?? "-"}kg｜人民幣 ${item.cny ?? "未抓到"}${paidText}｜地址：${item.address || "未抓到"}｜台灣單號：${item.taiwan_tracking || "還沒收到"}`;
 
     const actions = document.createElement("div");
     actions.className = "button-row wrap";

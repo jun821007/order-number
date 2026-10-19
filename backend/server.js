@@ -7,6 +7,7 @@ const cookieParser = require("cookie-parser");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const bcrypt = require("bcryptjs");
+const { isPaidAck, parseBankDebit, nearestUnpaidQuote, reconcilePaidQuotes, parseTaipeiTime } = require("./taobao-paid");
 
 const app = express();
 const PORT = process.env.PORT || 3100;
@@ -662,10 +663,12 @@ async function readInbox() {
       log: Array.isArray(parsed.log) ? parsed.log : [],
       sync: parsed.sync && typeof parsed.sync === "object" ? parsed.sync : null,
       syncWechat: parsed.syncWechat && typeof parsed.syncWechat === "object" ? parsed.syncWechat : null,
-      syncLine: parsed.syncLine && typeof parsed.syncLine === "object" ? parsed.syncLine : null
+      syncLine: parsed.syncLine && typeof parsed.syncLine === "object" ? parsed.syncLine : null,
+      paid_acks: Array.isArray(parsed.paid_acks) ? parsed.paid_acks : [],
+      bank_debits: Array.isArray(parsed.bank_debits) ? parsed.bank_debits : []
     };
   } catch {
-    return { processed: [], pending: [], log: [], sync: null, syncWechat: null, syncLine: null };
+    return { processed: [], pending: [], log: [], sync: null, syncWechat: null, syncLine: null, paid_acks: [], bank_debits: [] };
   }
 }
 
@@ -673,7 +676,9 @@ async function writeInbox(inbox) {
   const next = {
     processed: inbox.processed.slice(-INBOX_MAX_PROCESSED),
     pending: inbox.pending,
-    log: inbox.log.slice(-INBOX_MAX_LOG)
+    log: inbox.log.slice(-INBOX_MAX_LOG),
+    paid_acks: (inbox.paid_acks || []).slice(-200),
+    bank_debits: (inbox.bank_debits || []).slice(-200)
   };
   if (inbox.sync && typeof inbox.sync === "object") next.sync = inbox.sync;
   if (inbox.syncWechat && typeof inbox.syncWechat === "object") next.syncWechat = inbox.syncWechat;
@@ -947,6 +952,8 @@ function assignTaiwanTracking(data, inbox, tracking, messageAt) {
 async function processInboxMessages(messages) {
   return withWriteLock(async () => {
     const inbox = await readInbox();
+    if (!Array.isArray(inbox.paid_acks)) inbox.paid_acks = [];
+    if (!Array.isArray(inbox.bank_debits)) inbox.bank_debits = [];
     const processedSet = new Set(inbox.processed);
     const fresh = messages
       .map((message) => ({ ...message, hash: hashMessageId(message.id) }))
@@ -961,6 +968,34 @@ async function processInboxMessages(messages) {
     const nowIso = new Date().toISOString();
 
     for (const message of fresh) {
+      const bankDebit = parseBankDebit(message.text);
+      if (bankDebit) {
+        inbox.bank_debits.push({ id: message.hash, at: message.ts, twd: bankDebit.twd, state: "open" });
+        reconcilePaidQuotes(inbox, nowIso);
+        inbox.processed.push(message.hash);
+        continue;
+      }
+      if (isPaidAck(message.text)) {
+        const paidAt = parseTaipeiTime(message.ts);
+        const quote = nearestUnpaidQuote(inbox.pending, paidAt);
+        inbox.paid_acks.push({
+          id: message.hash,
+          at: message.ts,
+          quote_id: quote ? quote.id : "",
+          state: "open"
+        });
+        if (!quote) {
+          inbox.log.push({
+            at: nowIso,
+            message_ts: message.ts,
+            type: "paid",
+            text: "淘寶/收到付了，前面沒有未掛台幣的拍"
+          });
+        }
+        reconcilePaidQuotes(inbox, nowIso);
+        inbox.processed.push(message.hash);
+        continue;
+      }
       const parsed = parseInboxMessage(message.text);
       const messageAt = parseTaobaoTime(message.ts);
 

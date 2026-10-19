@@ -8,6 +8,7 @@
 //   node taobao-desktop-sync.mjs                常駐，每隔 POLL_MS 同步一次
 
 import fs from "node:fs";
+import { sendCtbcTaobaoDebits } from "./ctbc-taobao-notify.mjs";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { execFile } from "node:child_process";
@@ -882,6 +883,12 @@ async function syncOnce() {
   if (!secret) {
     log("尚未設定密鑰：請執行 node taobao-desktop-sync.mjs --set-secret");
     return;
+  }
+
+  try {
+    await sendCtbcTaobaoDebits({ log, secret });
+  } catch (error) {
+    log(`中國信託扣款未送出：${error.message}`);
   }
 
   const found = await ensureChatReady();
