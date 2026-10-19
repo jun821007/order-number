@@ -1325,13 +1325,14 @@ function runBulkShip() {
 
   const twList = parseTaiwanTrackingIds(els.bulkShipTaiwanInput.value || "");
   const batchTracking = twList.length ? twList.join("\n") : `BATCH-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
-  const group = upsertTaiwanGroupByTracking(batchTracking);
   const trackingIndex = buildTrackingIndex();
   const now = nowIso();
 
   const processed = [];
   const notFound = [];
   const invalid = [];
+  const blocked = [];
+  let group = null;
 
   lines.forEach((line) => {
     if (/^合計|^合计|^total/i.test(line.replace(/\s+/g, ""))) return;
@@ -1344,6 +1345,11 @@ function runBulkShip() {
     if (!entries.length) return notFound.push(tracking);
 
     entries.forEach(({ friend, parcel }) => {
+      if (isUnassignedOwner(friend)) {
+        blocked.push(parcel.tracking_id_china || tracking);
+        return;
+      }
+      if (!group) group = upsertTaiwanGroupByTracking(batchTracking);
       parcel.weight_kg = Number.isFinite(weight) ? weight : parcel.weight_kg;
       parcel.status = "shipped_to_taiwan";
       parcel.taiwan_parcel_group_id = group.id;
@@ -1358,6 +1364,7 @@ function runBulkShip() {
     output.push(processed.join("\n"));
     output.push(`\n合計 ${processed.length} 件`);
   }
+  if (blocked.length) output.push(`\n還在未分件主，請先 key 到件主：${[...new Set(blocked)].join(", ")}`);
   if (notFound.length) output.push(`\n找不到單號：${notFound.join(", ")}`);
   if (invalid.length) output.push(`\n格式錯誤：\n${invalid.join("\n")}`);
 
@@ -1417,7 +1424,7 @@ function deleteParcel(parcelId) {
 function editParcel(parcelId) {
   const owner = findParcelOwnerById(parcelId);
   if (!owner) return;
-  const { parcel } = owner;
+  const { friend, parcel } = owner;
 
   const remark = prompt("備註：", parcel.remark || "");
   if (remark === null) return;
@@ -1449,17 +1456,35 @@ function editParcel(parcelId) {
   const nextStatus = statusMap[(statusInput || "").trim()] || parcel.status;
   const nextPriority = parsePriority(priorityInput);
   const nextWeight = Number.parseFloat(weightInput || "0");
+  const twList = parseTaiwanTrackingIds(twInput || "");
+  const tw = twList.join("\n");
+  const shipBlocked = isUnassignedOwner(friend) && (nextStatus === "shipped_to_taiwan" || Boolean(tw));
 
   parcel.remark = remark.trim();
-  parcel.status = nextStatus;
   parcel.shipping_priority = nextPriority;
   parcel.weight_kg = Number.isFinite(nextWeight) && nextWeight >= 0 ? nextWeight : parcel.weight_kg;
 
+  if (shipBlocked) {
+    if (nextStatus !== "shipped_to_taiwan") {
+      parcel.status = nextStatus;
+      if (parcel.status === "arrived_at_warehouse" && !parcel.arrived_at_warehouse_time) parcel.arrived_at_warehouse_time = nowIso();
+      if (parcel.status === "pending_arrival" || parcel.status === "arrived_at_warehouse") {
+        if (parcel.taiwan_parcel_group_id) {
+          linkParcelToTaiwanGroup(parcel.id, "");
+          parcel.taiwan_parcel_group_id = null;
+        }
+        parcel.shipped_to_taiwan_time = null;
+      }
+    }
+    confirm(`${unassignedShipNotice([parcel])}\n\n這次不會出貨。`);
+    persistAndRender("已更新單號");
+    return;
+  }
+
+  parcel.status = nextStatus;
   if (parcel.status === "arrived_at_warehouse" && !parcel.arrived_at_warehouse_time) parcel.arrived_at_warehouse_time = nowIso();
   if (parcel.status === "shipped_to_taiwan" && !parcel.shipped_to_taiwan_time) parcel.shipped_to_taiwan_time = nowIso();
 
-  const twList = parseTaiwanTrackingIds(twInput || "");
-  const tw = twList.join("\n");
   if (!tw) {
     parcel.taiwan_parcel_group_id = null;
     linkParcelToTaiwanGroup(parcel.id, "");
@@ -1485,6 +1510,12 @@ function updateParcelWeight(parcelId, nextWeight, message = "") {
 function updateParcelStatus(parcelId, nextStatus, message = "") {
   const owner = findParcelOwnerById(parcelId);
   if (!owner || !STATUS_LABEL[nextStatus]) return false;
+
+  if (nextStatus === "shipped_to_taiwan" && isUnassignedOwner(owner.friend)) {
+    confirm(`${unassignedShipNotice([owner.parcel])}\n\n這次不會出貨。`);
+    render();
+    return false;
+  }
 
   const { parcel } = owner;
   parcel.status = nextStatus;
