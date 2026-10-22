@@ -20,15 +20,40 @@ function isPaidAck(text) {
   return compact.length > 0 && compact.length <= 8 && compact.endsWith("付了");
 }
 
+function hasTaobaoPayLink(raw) {
+  return raw.includes("支付寶_淘寶") || raw.includes("支付宝_淘宝");
+}
+
+function parseTwdAmount(raw) {
+  const patterns = [
+    /交易金[額额]\s*[:：]\s*(\d+(?:\.\d+)?)\s*元/,
+    /(?:NT\s*\$|ＮＴ\s*＄|新台幣|新臺幣|金額)\s*[:：]?\s*\$?\s*(\d+(?:\.\d+)?)/,
+    /(\d+(?:\.\d+)?)\s*元/
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (!match) continue;
+    const twd = Number(match[1]);
+    if (Number.isFinite(twd) && twd > 0) return twd;
+  }
+  return null;
+}
+
 function parseBankDebit(text) {
   const raw = String(text || "");
-  const brand = raw.includes("支付寶_淘寶") || raw.includes("支付宝_淘宝");
-  const spend = raw.includes("消費扣款") || raw.includes("消费扣款");
-  const amount = raw.match(/交易金[額额]\s*[:：]\s*(\d+(?:\.\d+)?)\s*元/);
-  if (!brand || !spend || !amount) return null;
-  const twd = Number(amount[1]);
-  if (!Number.isFinite(twd) || twd <= 0) return null;
-  return { twd };
+  const taobao = hasTaobaoPayLink(raw);
+  const lineConvenience = raw.includes("中國信託") && raw.includes("方便付");
+  const cardSpend = raw.includes("消費扣款") || raw.includes("消费扣款");
+  // LINE 官方帳號要同時有「中國信託 方便付」和支付寶_淘寶連結。
+  // 既有卡片通知仍要消費扣款＋支付寶_淘寶＋金額。
+  if (lineConvenience) {
+    if (!taobao) return null;
+  } else if (!taobao || !cardSpend) {
+    return null;
+  }
+  const twd = parseTwdAmount(raw);
+  if (!Number.isFinite(twd)) return null;
+  return { twd, source: lineConvenience ? "line-convenience" : "card" };
 }
 
 function rateOf(twd, cny) {
@@ -90,18 +115,24 @@ function reconcilePaidQuotes(inbox, nowIso) {
       const debitAt = parseTaipeiTime(debit.at);
       return Number.isFinite(debitAt) && Math.abs(debitAt - at) <= PAID_WINDOW_MS;
     });
-    const fitting = openDebits.filter((debit) => rateOk(debit.twd, quote.cny));
+    const fitting = openDebits
+      .filter((debit) => rateOk(debit.twd, quote.cny))
+      .sort((a, b) => Math.abs(parseTaipeiTime(a.at) - at) - Math.abs(parseTaipeiTime(b.at) - at));
     if (fitting.length >= 2) {
-      ack.state = "blocked";
-      pushLog(
-        inbox,
-        nowIso,
-        ack.at,
-        `淘寶/3 小時內兩筆扣款都落在 4.6～5（${fitting.map(moneyTime).join("、")}），沒有掛上台幣`
-      );
-      return;
+      const nearestGap = Math.abs(parseTaipeiTime(fitting[0].at) - at);
+      const tied = fitting.filter((debit) => Math.abs(parseTaipeiTime(debit.at) - at) === nearestGap);
+      if (tied.length >= 2) {
+        ack.state = "blocked";
+        pushLog(
+          inbox,
+          nowIso,
+          ack.at,
+          `淘寶/3 小時內兩筆扣款同樣最近且都落在 4.6～5（${tied.map(moneyTime).join("、")}），沒有掛上台幣`
+        );
+        return;
+      }
     }
-    if (fitting.length === 1) {
+    if (fitting.length >= 1) {
       const debit = fitting[0];
       const rivals = acks.filter((other) => {
         if (other === ack || other.state !== "open") return false;

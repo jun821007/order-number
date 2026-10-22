@@ -75,7 +75,8 @@ function loadDebits() {
   const db = new DatabaseSync(dest, { readOnly: true });
   const rows = db.prepare(
     "SELECT Id, ArrivalTime, Payload FROM Notification " +
-    "WHERE CAST(Payload AS TEXT) LIKE '%淘寶%' OR CAST(Payload AS TEXT) LIKE '%淘宝%' " +
+    "WHERE CAST(Payload AS TEXT) LIKE '%方便付%' " +
+    "OR CAST(Payload AS TEXT) LIKE '%淘寶%' OR CAST(Payload AS TEXT) LIKE '%淘宝%' " +
     "OR CAST(Payload AS TEXT) LIKE '%支付寶_淘寶%' OR CAST(Payload AS TEXT) LIKE '%支付宝_淘宝%'"
   ).all();
   db.close();

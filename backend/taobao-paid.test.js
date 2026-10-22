@@ -3,6 +3,7 @@
 const {
   isPaidAck,
   parseBankDebit,
+  rateOk,
   nearestUnpaidQuote,
   reconcilePaidQuotes,
   parseTaipeiTime
@@ -23,6 +24,11 @@ assert(parseBankDebit(bank).twd === 204, "bank amount");
 assert(parseBankDebit("支付寶_淘寶 消費扣款") === null, "bank needs amount");
 assert(parseBankDebit("交易金額：204元") === null, "bank needs taobao spend");
 assert(parseBankDebit("支付宝_淘宝 消费扣款 交易金额：88.5元").twd === 88.5, "simplified");
+assert(parseBankDebit("中國信託 方便付 支付寶_淘寶 NT$204").twd === 204, "line convenience");
+assert(parseBankDebit("中國信託 方便付 商店連結 NT$204") === null, "line needs taobao link");
+assert(parseBankDebit("中國信託 方便付 支付寶_淘寶") === null, "line needs amount");
+assert(rateOk(460, 100) && rateOk(500, 100), "rate inclusive edges");
+assert(!rateOk(459, 100) && !rateOk(501, 100), "rate outside stays out");
 
 function quote(id, ts, cny) {
   return {
@@ -53,9 +59,21 @@ assert(inbox.log.some((entry) => entry.text.includes("沒有改掛更早的拍")
 inbox.bank_debits.push({ id: "d2", at: "2026-10-19 12:30:00", twd: 204, state: "open" });
 inbox.bank_debits.push({ id: "d3", at: "2026-10-19 12:40:00", twd: 205, state: "open" });
 reconcilePaidQuotes(inbox, "2026-10-19T04:40:00.000Z");
-assert(!Number.isFinite(Number(inbox.pending[1].paid_twd)), "two fitting debits do not attach");
-assert(inbox.paid_acks[0].state === "blocked", "ack blocked");
-assert(inbox.log.some((entry) => entry.text.includes("兩筆扣款")), "ambiguity logged");
+assert(inbox.pending[1].paid_twd === 204, "nearest in-range debit attaches");
+assert(inbox.bank_debits.find((debit) => debit.id === "d3").state === "open", "farther debit stays unused");
+
+const tied = {
+  pending: [quote("t", "2026-10-19 13:00:00", 41)],
+  paid_acks: [{ id: "ackt", at: "2026-10-19 13:00:00", quote_id: "t", state: "open" }],
+  bank_debits: [
+    { id: "t1", at: "2026-10-19 13:10:00", twd: 204, state: "open" },
+    { id: "t2", at: "2026-10-19 12:50:00", twd: 205, state: "open" }
+  ],
+  log: []
+};
+reconcilePaidQuotes(tied, "2026-10-19T05:20:00.000Z");
+assert(!Number.isFinite(Number(tied.pending[0].paid_twd)), "exact time tie does not attach");
+assert(tied.log.some((entry) => entry.text.includes("同樣最近")), "tie is logged");
 
 const later = {
   pending: [quote("c", "2026-10-19 15:00:00", 41)],
