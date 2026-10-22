@@ -619,7 +619,8 @@ const INBOX_MAX_PROCESSED = 5000;
 const INBOX_MAX_LOG = 100;
 const INBOX_ADDRESS_WINDOW_MS = 60 * 60 * 1000;
 
-const UNASSIGNED_OWNER_NAME = "未分件主";
+const UNASSIGNED_OWNER_NAME = "件主未填";
+const LEGACY_UNASSIGNED_OWNER_NAME = "未分件主";
 const INBOX_WEIGHT_LINE = /^(\d+(?:\.\d+)?)\s*(?:kg|公斤)?\s+([A-Za-z0-9]{6,})(?:\s+.*)?$/i;
 const INBOX_PAY_LINE = /^拍\s*[:：]?\s*(\d+(?:\.\d+)?)/;
 const INBOX_TOTAL_LINE = /^(?:合计|合計)\s*[:：]?\s*(\d+(?:\.\d+)?)/;
@@ -824,9 +825,15 @@ function applyInboundToData(data, items, nowIso) {
   return { updated, missing, skipped };
 }
 
+function isUnassignedOwnerName(name) {
+  const value = String(name || "").trim();
+  return value === UNASSIGNED_OWNER_NAME || value === LEGACY_UNASSIGNED_OWNER_NAME;
+}
+
 function ensureUnassignedOwner(data) {
-  const existing = data.friends.find((friend) => (friend.name || "").trim() === UNASSIGNED_OWNER_NAME);
+  const existing = data.friends.find((friend) => isUnassignedOwnerName(friend.name));
   if (existing) {
+    existing.name = UNASSIGNED_OWNER_NAME;
     if (!Array.isArray(existing.parcels)) existing.parcels = [];
     return existing;
   }
@@ -844,7 +851,25 @@ function ensureUnassignedOwner(data) {
   return owner;
 }
 
-function createUnassignedInboundParcels(data, items, arrivedIso, createdIso) {
+function applyDetectedQuoteFields(parcel, pending) {
+  if (!pending) return false;
+  let changed = false;
+  const taiwan = String(pending.taiwan_tracking || "").trim();
+  if (taiwan && parcel.detected_taiwan_tracking !== taiwan) {
+    parcel.detected_taiwan_tracking = taiwan;
+    changed = true;
+  }
+  const paid = Number(pending.paid_twd);
+  if (Number.isFinite(paid) && parcel.paid_twd !== paid) {
+    parcel.paid_twd = paid;
+    const rate = Number(pending.paid_rate);
+    parcel.paid_rate = Number.isFinite(rate) ? rate : null;
+    changed = true;
+  }
+  return changed;
+}
+
+function createUnassignedParcels(data, items, arrivedIso, createdIso, pending) {
   const index = buildServerTrackingIndex(data);
   const created = [];
   items.forEach(({ tracking, weight }) => {
@@ -860,15 +885,51 @@ function createUnassignedInboundParcels(data, items, arrivedIso, createdIso) {
       shipping_priority: "normal",
       weight_kg: Number.isFinite(weight) ? weight : 0,
       taiwan_parcel_group_id: null,
+      detected_taiwan_tracking: "",
+      paid_twd: null,
+      paid_rate: null,
       created_at: createdIso,
       arrived_at_warehouse_time: arrivedIso,
       shipped_to_taiwan_time: null
     };
+    applyDetectedQuoteFields(parcel, pending);
     owner.parcels.push(parcel);
     index.set(key, [{ friend: owner, parcel }]);
     created.push({ tracking: raw, weight: parcel.weight_kg, owner: owner.name });
   });
   return created;
+}
+
+function stampUnassignedFromPending(data, inbox) {
+  const index = buildServerTrackingIndex(data);
+  let changed = false;
+  (inbox.pending || []).forEach((pending) => {
+    (pending.items || []).forEach((item) => {
+      const key = String(item.tracking || "").trim().toLowerCase();
+      if (!key) return;
+      const entries = index.get(key) || [];
+      if (!entries.length) {
+        const created = createUnassignedParcels(
+          data,
+          [{ tracking: item.tracking, weight: item.weight }],
+          pending.created_at || new Date().toISOString(),
+          pending.created_at || new Date().toISOString(),
+          pending
+        );
+        if (created.length) changed = true;
+        return;
+      }
+      entries.forEach(({ friend, parcel }) => {
+        if (!isUnassignedOwnerName(friend.name)) return;
+        if (applyDetectedQuoteFields(parcel, pending)) changed = true;
+      });
+    });
+  });
+  return changed;
+}
+
+function createUnassignedInboundParcels(data, items, arrivedIso, createdIso) {
+  return createUnassignedParcels(data, items, arrivedIso, createdIso, null);
 }
 
 function normalizeLabelTrackings(raw) {
@@ -1023,13 +1084,17 @@ async function processInboxMessages(messages) {
             parts.push(`淘寶/自動入庫 ${result.updated.length} 筆：${result.updated.map((u) => `${u.weight.toFixed(1)} ${u.tracking} ${u.owner}`).join("、")}`);
           }
           if (created.length) {
-            parts.push(`淘寶/未分件主入倉 ${created.length} 筆：${created.map((item) => `${Number(item.weight).toFixed(1)} ${item.tracking}`).join("、")}`);
+            parts.push(`淘寶/件主未填入倉 ${created.length} 筆：${created.map((item) => `${Number(item.weight).toFixed(1)} ${item.tracking}`).join("、")}`);
           }
           if (stillMissing.length) parts.push(`淘寶/單號未key：${stillMissing.join("、")}`);
           inbox.log.push({ at: nowIso, message_ts: message.ts, type: "inbound", text: parts.join("；") });
         }
       } else if (parsed.type === "quote") {
         data = data || await readDataFile();
+        const indexBefore = buildServerTrackingIndex(data);
+        const missingItems = parsed.items.filter((item) => !(indexBefore.get(String(item.tracking || "").toLowerCase()) || []).length);
+        const created = createUnassignedParcels(data, missingItems, new Date(messageAt).toISOString(), nowIso, null);
+        if (created.length) dataChanged = true;
         const index = buildServerTrackingIndex(data);
         const shippable = parsed.items.filter((item) => (index.get(item.tracking.toLowerCase()) || [])
           .some(({ parcel }) => parcel.status !== "shipped_to_taiwan"));
@@ -1044,7 +1109,9 @@ async function processInboxMessages(messages) {
             address: parsed.address
           });
           summary.quotes += 1;
-          inbox.log.push({ at: nowIso, message_ts: message.ts, type: "quote", text: `淘寶/收到出貨報價 ${parsed.items.length} 筆，拍 ${parsed.cny}，待確認` });
+          const parts = [`淘寶/收到出貨報價 ${parsed.items.length} 筆，拍 ${parsed.cny}，待確認`];
+          if (created.length) parts.push(`件主未填入單號管理 ${created.length} 筆：${created.map((item) => item.tracking).join("、")}`);
+          inbox.log.push({ at: nowIso, message_ts: message.ts, type: "quote", text: parts.join("；") });
         }
       } else if (parsed.type === "address") {
         const target = [...inbox.pending].reverse().find((pending) => !pending.address
@@ -1064,10 +1131,17 @@ async function processInboxMessages(messages) {
           none: `淘寶/收到台灣單號 ${parsed.taiwanTracking}，但找不到 3 天內未填單號的出貨，請手動填入`
         }[result];
         if (text) inbox.log.push({ at: nowIso, message_ts: message.ts, type: "taiwan", text });
+        if (result === "pending" || result === "group") {
+          data = data || await readDataFile();
+          if (stampUnassignedFromPending(data, inbox)) dataChanged = true;
+        }
       }
 
       inbox.processed.push(message.hash);
     }
+
+    data = data || await readDataFile();
+    if (stampUnassignedFromPending(data, inbox)) dataChanged = true;
 
     if (dataChanged) {
       await backupCurrentDataFile();

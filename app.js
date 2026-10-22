@@ -1128,10 +1128,12 @@ function addFriend() {
   persistAndRender("已新增朋友");
 }
 
-const UNASSIGNED_OWNER_NAME = "未分件主";
+const UNASSIGNED_OWNER_NAME = "件主未填";
+const LEGACY_UNASSIGNED_OWNER_NAME = "未分件主";
 
 function isUnassignedOwner(friend) {
-  return (friend?.name || "").trim() === UNASSIGNED_OWNER_NAME;
+  const name = (friend?.name || "").trim();
+  return name === UNASSIGNED_OWNER_NAME || name === LEGACY_UNASSIGNED_OWNER_NAME;
 }
 
 function splitUnassignedTargets(parcels) {
@@ -1147,7 +1149,7 @@ function splitUnassignedTargets(parcels) {
 
 function unassignedShipNotice(parcels) {
   const ids = [...new Set((parcels || []).map((parcel) => parcel.tracking_id_china).filter(Boolean))];
-  return `還在未分件主，請先 key 到件主${ids.length ? `：${ids.join("、")}` : ""}`;
+  return `還在件主未填，請先選定件主${ids.length ? `：${ids.join("、")}` : ""}`;
 }
 
 function addBulkParcels() {
@@ -1249,7 +1251,7 @@ function addBulkParcels() {
   els.bulkInput.value = "";
   const summary = [];
   if (inserted) summary.push(`已新增 ${inserted} 筆（直接入轉運倉 ${directArrived} 筆）`);
-  if (moved) summary.push(`從未分件主搬走 ${moved} 筆`);
+  if (moved) summary.push(`從件主未填搬走 ${moved} 筆`);
   if (duplicated.length) summary.push(`略過重複 ${duplicated.length} 筆`);
   persistAndRender(summary.join("，"));
 }
@@ -1364,7 +1366,7 @@ function runBulkShip() {
     output.push(processed.join("\n"));
     output.push(`\n合計 ${processed.length} 件`);
   }
-  if (blocked.length) output.push(`\n還在未分件主，請先 key 到件主：${[...new Set(blocked)].join(", ")}`);
+  if (blocked.length) output.push(`\n還在件主未填，請先選定件主：${[...new Set(blocked)].join(", ")}`);
   if (notFound.length) output.push(`\n找不到單號：${notFound.join(", ")}`);
   if (invalid.length) output.push(`\n格式錯誤：\n${invalid.join("\n")}`);
 
@@ -1403,6 +1405,10 @@ function getFilteredParcels(friend) {
 function historySummary(parcel) {
   const arr = [];
   if (parcel.arrived_at_warehouse_time) arr.push(`入庫: ${formatTime(parcel.arrived_at_warehouse_time)}`);
+  if (Number.isFinite(Number(parcel.paid_twd))) {
+    const rate = Number(parcel.paid_rate);
+    arr.push(`付了: ${Number(parcel.paid_twd)}${Number.isFinite(rate) ? `（匯率 ${rate}）` : ""}`);
+  }
   if (parcel.shipped_to_taiwan_time) arr.push(`出貨: ${formatTime(parcel.shipped_to_taiwan_time)}`);
   return arr.length ? arr.join(" | ") : `建立: ${formatTime(parcel.created_at)}`;
 }
@@ -1554,15 +1560,41 @@ function updateSelectedCountUI() {
   }
 }
 
+function visibleTaiwanTracking(parcel) {
+  const shipped = getTaiwanIdForParcel(parcel);
+  if (shipped) return getTaiwanTrackingDisplayValue(shipped);
+  return String(parcel.detected_taiwan_tracking || "").trim();
+}
+
+function ownerCellHtml(parcel, ownerName) {
+  if (!isUnassignedOwner({ name: ownerName })) return ownerName || "-";
+  const options = state.data.friends
+    .filter((friend) => !isUnassignedOwner(friend))
+    .map((friend) => `<option value="${friend.id}">${friend.name}</option>`)
+    .join("");
+  return `<select data-reassign-id="${parcel.id}"><option value="">件主未填</option>${options}</select>`;
+}
+
+function moveUnassignedParcel(parcelId, friendId) {
+  const owner = findParcelOwnerById(parcelId);
+  const target = state.data.friends.find((friend) => friend.id === friendId);
+  if (!owner || !target || !isUnassignedOwner(owner.friend) || isUnassignedOwner(target)) return;
+  const { friend, parcel } = owner;
+  friend.parcels = friend.parcels.filter((item) => item.id !== parcel.id);
+  target.parcels.push(parcel);
+  state.selectedFriendId = target.id;
+  persistAndRender(`已改件主為 ${target.name}`);
+}
+
 function buildParcelRow(parcel, ownerName, className = "") {
   const tr = document.createElement("tr");
   if (className) tr.className = className;
-  const tw = getTaiwanTrackingDisplayValue(getTaiwanIdForParcel(parcel));
+  const tw = visibleTaiwanTracking(parcel);
   tr.innerHTML = `
     <td><input type="checkbox" data-parcel-id="${parcel.id}" ${state.selectedParcelIds.has(parcel.id) ? "checked" : ""}></td>
     <td><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></td>
     <td>${parcel.remark || "-"}</td>
-    <td>${ownerName || "-"}</td>
+    <td>${ownerCellHtml(parcel, ownerName)}</td>
     <td><select class="${getStatusSelectClass(parcel.status)}" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select></td>
     <td>${PRIORITY_LABEL[parcel.shipping_priority] || parcel.shipping_priority}</td>
     <td><input class="weight-input" type="number" min="0" step="0.1" value="${Number(parcel.weight_kg || 0).toFixed(1)}" data-weight-id="${parcel.id}"></td>
@@ -1579,7 +1611,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
 }
 
 function buildParcelCard(parcel, ownerName, className) {
-  const tw = getTaiwanTrackingDisplayValue(getTaiwanIdForParcel(parcel));
+  const tw = visibleTaiwanTracking(parcel);
   const div = document.createElement("div");
   div.className = "parcel-card " + (className || "");
   div.innerHTML = `
@@ -1587,7 +1619,7 @@ function buildParcelCard(parcel, ownerName, className) {
     <div class="parcel-card-body">
       <div class="parcel-card-tracking"><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></div>
       <div class="parcel-card-meta">
-        <span>${ownerName || "-"}</span>
+        <span>${ownerCellHtml(parcel, ownerName)}</span>
         <select class="${getStatusSelectClass(parcel.status)}" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select>
       </div>
       <div class="mobile-weight-editor">
@@ -1651,6 +1683,13 @@ function renderParcelRows() {
     });
   });
 
+  els.parcelTbody.querySelectorAll("select[data-reassign-id]").forEach((select) => {
+    select.addEventListener("change", (e) => {
+      const friendId = e.target.value;
+      if (!friendId) return;
+      moveUnassignedParcel(e.target.getAttribute("data-reassign-id"), friendId);
+    });
+  });
   els.parcelTbody.querySelectorAll("select[data-status-id]").forEach((select) => {
     select.addEventListener("change", (e) => {
       const id = e.target.getAttribute("data-status-id");
@@ -1729,6 +1768,13 @@ function renderParcelRows() {
           if (e.target.checked) state.selectedParcelIds.add(id);
           else state.selectedParcelIds.delete(id);
           updateSelectedCountUI();
+        });
+      });
+      els.parcelCardList.querySelectorAll("select[data-reassign-id]").forEach((select) => {
+        select.addEventListener("change", (e) => {
+          const friendId = e.target.value;
+          if (!friendId) return;
+          moveUnassignedParcel(e.target.getAttribute("data-reassign-id"), friendId);
         });
       });
       els.parcelCardList.querySelectorAll("select[data-status-id]").forEach((select) => {
@@ -2345,7 +2391,7 @@ function confirmPendingShipment(pending) {
   const uniqueList = (list) => [...new Set(list)];
   if (!targets.length) {
     if (unassigned.length) {
-      const lines = [`還在未分件主，請先 key 到件主：${uniqueList(unassigned).join("、")}`];
+      const lines = [`還在件主未填，請先選定件主：${uniqueList(unassigned).join("、")}`];
       if (alreadyShipped.length) lines.push(`已出轉運：${uniqueList(alreadyShipped).join("、")}`);
       if (missing.length) lines.push(`還沒 key：${uniqueList(missing).join("、")}`);
       lines.push("這次不會出貨。");
@@ -2356,7 +2402,7 @@ function confirmPendingShipment(pending) {
     return;
   }
   const notes = [];
-  if (unassigned.length) notes.push(`還在未分件主，請先 key 到件主：${uniqueList(unassigned).join("、")}`);
+  if (unassigned.length) notes.push(`還在件主未填，請先選定件主：${uniqueList(unassigned).join("、")}`);
   if (missing.length) notes.push(`還沒 key：${missing.join("、")}`);
   if (alreadyShipped.length) notes.push(`已出轉運：${alreadyShipped.join("、")}`);
   if (notes.length && !confirm(`${notes.join("\n")}\n\n其餘 ${targets.length} 筆照常出貨？`)) return;
