@@ -25,10 +25,13 @@ assert(parseBankDebit("支付寶_淘寶 消費扣款") === null, "bank needs amo
 assert(parseBankDebit("交易金額：204元") === null, "bank needs taobao spend");
 assert(parseBankDebit("支付宝_淘宝 消费扣款 交易金额：88.5元").twd === 88.5, "simplified");
 assert(parseBankDebit("中國信託 方便付 支付寶_淘寶 NT$204").twd === 204, "line convenience");
+assert(parseBankDebit("方便付-支付寶_淘寶消費扣款 交易金額：407元").twd === 407, "flex without bank name");
+assert(parseBankDebit("方便付 支付寶_淘寶 交易金額：3,694元").twd === 3694, "comma amount");
 assert(parseBankDebit("中國信託 方便付 商店連結 NT$204") === null, "line needs taobao link");
 assert(parseBankDebit("中國信託 方便付 支付寶_淘寶") === null, "line needs amount");
-assert(rateOk(460, 100) && rateOk(500, 100), "rate inclusive edges");
-assert(!rateOk(459, 100) && !rateOk(501, 100), "rate outside stays out");
+assert(rateOk(450, 100) && rateOk(520, 100), "rate inclusive edges");
+assert(rateOk(407, 81), "today sample 407/81");
+assert(!rateOk(449, 100) && !rateOk(521, 100), "rate outside stays out");
 
 function quote(id, ts, cny) {
   return {

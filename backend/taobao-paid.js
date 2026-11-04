@@ -1,8 +1,8 @@
 "use strict";
 
 const PAID_WINDOW_MS = 3 * 60 * 60 * 1000;
-const RATE_MIN = 4.6;
-const RATE_MAX = 5;
+const RATE_MIN = 4.5;
+const RATE_MAX = 5.2;
 
 function parseTaipeiTime(ts) {
   const raw = String(ts || "").trim();
@@ -26,14 +26,14 @@ function hasTaobaoPayLink(raw) {
 
 function parseTwdAmount(raw) {
   const patterns = [
-    /交易金[額额]\s*[:：]\s*(\d+(?:\.\d+)?)\s*元/,
-    /(?:NT\s*\$|ＮＴ\s*＄|新台幣|新臺幣|金額)\s*[:：]?\s*\$?\s*(\d+(?:\.\d+)?)/,
-    /(\d+(?:\.\d+)?)\s*元/
+    /交易金[額额]\s*[:：]\s*([\d,]+(?:\.\d+)?)\s*元/,
+    /(?:NT\s*\$|ＮＴ\s*＄|新台幣|新臺幣|金額)\s*[:：]?\s*\$?\s*([\d,]+(?:\.\d+)?)/,
+    /([\d,]+(?:\.\d+)?)\s*元/
   ];
   for (const pattern of patterns) {
     const match = raw.match(pattern);
     if (!match) continue;
-    const twd = Number(match[1]);
+    const twd = Number(String(match[1]).replace(/,/g, ""));
     if (Number.isFinite(twd) && twd > 0) return twd;
   }
   return null;
@@ -42,12 +42,11 @@ function parseTwdAmount(raw) {
 function parseBankDebit(text) {
   const raw = String(text || "");
   const taobao = hasTaobaoPayLink(raw);
-  const lineConvenience = raw.includes("中國信託") && raw.includes("方便付");
+  // Flex 內文常只有「方便付」＋支付寶_淘寶，不一定再寫中國信託。
+  const lineConvenience = raw.includes("方便付") && taobao;
   const cardSpend = raw.includes("消費扣款") || raw.includes("消费扣款");
-  // LINE 官方帳號要同時有「中國信託 方便付」和支付寶_淘寶連結。
-  // 既有卡片通知仍要消費扣款＋支付寶_淘寶＋金額。
   if (lineConvenience) {
-    if (!taobao) return null;
+    // ok
   } else if (!taobao || !cardSpend) {
     return null;
   }
@@ -127,7 +126,7 @@ function reconcilePaidQuotes(inbox, nowIso) {
           inbox,
           nowIso,
           ack.at,
-          `淘寶/3 小時內兩筆扣款同樣最近且都落在 4.6～5（${tied.map(moneyTime).join("、")}），沒有掛上台幣`
+          `淘寶/3 小時內兩筆扣款同樣最近且都落在 4.5～5.2（${tied.map(moneyTime).join("、")}），沒有掛上台幣`
         );
         return;
       }
@@ -170,7 +169,7 @@ function reconcilePaidQuotes(inbox, nowIso) {
         inbox,
         nowIso,
         ack.at,
-        `淘寶/最近一則拍 ${quote.cny} 對扣款 ${moneyTime(debit)} 匯率超出 4.6～5，沒有改掛更早的拍`
+        `淘寶/最近一則拍 ${quote.cny} 對扣款 ${moneyTime(debit)} 匯率超出 4.5～5.2，沒有改掛更早的拍`
       );
     });
   });

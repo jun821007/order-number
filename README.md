@@ -82,7 +82,7 @@ node -e "const b=require('bcryptjs'); console.log(b.hashSync('你的密碼', 12)
 5. 密鑰、已送出紀錄、日誌存在 `%LOCALAPPDATA%\order-number-taobao-sync\`（不進 git）
 6. 每 60 分鐘讀一次淘寶「待收貨」訂單，有快遞單號的新訂單自動加到件主「鈞」名下（備註＝商品名前 20 字），排除集運站自己的訂單與虛擬商品；`--orders` 可立即檢查一次
 7. 1688：工作排程器 `Order1688Chrome` 開一個同步專用 Chrome（`--remote-debugging-port=9334`，設定檔在 `%LOCALAPPDATA%\order-number-taobao-sync\chrome-1688`），在裡面登入 1688 一次；每 60 分鐘在背景分頁讀「待收货」訂單與物流單號，一樣加到「鈞」名下
-8. 捷豹聊天打「付了」之後，同步程式會從 Windows 通知抽出中國信託卡片扣款，以及 LINE 官方帳號「中國信託 方便付」且含支付寶_淘寶的通知。只在 3 小時內、時間最近、台幣÷拍落在 4.6～5（含）才掛上「付了」；對不上就不帶入，也不擋住入庫或出貨。確認出貨時仍要自己填台幣總額。可單獨跑：`node "C:\Users\rsz97\Order number\tools\ctbc-taobao-notify.mjs"`
+8. 捷豹聊天打「付了」之後，台幣運費主要來自報價手機上的 LINE SQL（中國信託官方帳號「方便付／支付寶_淘寶」Flex）。Termux：`~/run_line_ctbc_debit_sync.sh`。只在 3 小時內、時間最近、台幣÷拍落在 4.5～5.2（含）才掛上「付了」；對不上就不帶入。確認出貨時仍要自己填台幣總額。Win11 通知刮刀可當備援：`node "C:\Users\rsz97\Order number\tools\ctbc-taobao-notify.mjs"`
 
 ### 微信面單入庫（選用）
 

@@ -1513,6 +1513,57 @@ function updateParcelWeight(parcelId, nextWeight, message = "") {
   return true;
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function updateParcelRemark(parcelId, nextRemark, message = "") {
+  const owner = findParcelOwnerById(parcelId);
+  if (!owner) return false;
+  owner.parcel.remark = String(nextRemark || "").trim();
+  persistAndRender(message);
+  return true;
+}
+
+function startRemarkEdit(parcelId, anchor) {
+  const owner = findParcelOwnerById(parcelId);
+  if (!owner || !anchor) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "remark-input";
+  input.value = owner.parcel.remark || "";
+  input.setAttribute("aria-label", "備註");
+  const finish = (save) => {
+    if (input.dataset.done === "1") return;
+    input.dataset.done = "1";
+    if (save) {
+      const next = input.value.trim();
+      if (next !== String(owner.parcel.remark || "").trim()) {
+        updateParcelRemark(parcelId, next, "已更新備註");
+        return;
+      }
+    }
+    renderParcelRows();
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finish(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener("blur", () => finish(true));
+  anchor.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
 function updateParcelStatus(parcelId, nextStatus, message = "") {
   const owner = findParcelOwnerById(parcelId);
   if (!owner || !STATUS_LABEL[nextStatus]) return false;
@@ -1593,7 +1644,7 @@ function buildParcelRow(parcel, ownerName, className = "") {
   tr.innerHTML = `
     <td><input type="checkbox" data-parcel-id="${parcel.id}" ${state.selectedParcelIds.has(parcel.id) ? "checked" : ""}></td>
     <td><button class="link-btn" data-edit-id="${parcel.id}">${parcel.tracking_id_china}</button></td>
-    <td>${parcel.remark || "-"}</td>
+    <td><button type="button" class="remark-btn" data-remark-id="${parcel.id}" title="點一下改備註">${escapeHtml(parcel.remark) || "-"}</button></td>
     <td>${ownerCellHtml(parcel, ownerName)}</td>
     <td><select class="${getStatusSelectClass(parcel.status)}" data-status-id="${parcel.id}">${buildStatusOptions(parcel.status)}</select></td>
     <td>${PRIORITY_LABEL[parcel.shipping_priority] || parcel.shipping_priority}</td>
@@ -1626,7 +1677,7 @@ function buildParcelCard(parcel, ownerName, className) {
         <label>重量(kg)</label>
         <input class="weight-input" type="number" min="0" step="0.1" value="${Number(parcel.weight_kg || 0).toFixed(1)}" data-weight-id="${parcel.id}">
       </div>
-      ${parcel.remark ? '<div class="parcel-card-remark">' + parcel.remark + "</div>" : ""}
+      <div class="parcel-card-remark"><button type="button" class="remark-btn" data-remark-id="${parcel.id}" title="點一下改備註">${escapeHtml(parcel.remark) || "點一下填備註"}</button></div>
       ${tw ? '<div class="parcel-card-tw tw-display">台灣:\n' + tw + "</div>" : ""}
       <div class="parcel-card-date">${formatDateOnly(parcel.shipped_to_taiwan_time || parcel.arrived_at_warehouse_time || parcel.created_at)}</div>
       <div class="button-row tight">
@@ -1714,6 +1765,14 @@ function renderParcelRows() {
     });
   });
 
+  els.parcelTbody.querySelectorAll("button[data-remark-id]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startRemarkEdit(btn.getAttribute("data-remark-id"), btn);
+    });
+  });
+
   els.parcelTbody.querySelectorAll("button[data-copy-one]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-copy-one");
@@ -1796,6 +1855,13 @@ function renderParcelRows() {
             return;
           }
           updateParcelWeight(id, value, "");
+        });
+      });
+      els.parcelCardList.querySelectorAll("button[data-remark-id]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          startRemarkEdit(btn.getAttribute("data-remark-id"), btn);
         });
       });
       els.parcelCardList.querySelectorAll("button[data-copy-one]").forEach((btn) => {
