@@ -184,31 +184,66 @@ async function detectCaptureBlockers({ ignoreOrphanLogin = false } = {}) {
     return null;
   }
   let update = false;
-  let login = false;
+  let loginTab = false;
   let loginVisible = false;
   for (const page of targets.filter((t) => t.type === "page" && t.webSocketDebuggerUrl)) {
-    const loginTab = isLoginPage(page);
-    if (loginTab) login = true;
-    if (!/^https?:\/\//i.test(page.url || "") && !loginTab) continue;
+    const isLogin = isLoginPage(page);
+    if (isLogin && !(await isRewardLoginPage(page))) loginTab = true;
+    if (!/^https?:\/\//i.test(page.url || "") && !isLogin) continue;
     try {
-      if (loginTab) {
+      if (isLogin && !(await isRewardLoginPage(page))) {
         const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
         if (state.visible) loginVisible = true;
       }
-      const raw = await evaluateInPage(page.webSocketDebuggerUrl, CAPTURE_BLOCKER_EXPRESSION);
-      const info = JSON.parse(raw);
-      if (info.update) update = true;
-      if (info.login) login = true;
+      // Skip empty changelog shells; only real force-update copy counts.
+      if ((page.title || "").includes("更新日志") || (page.url || "").includes("/dialog/")) {
+        const raw = await evaluateInPage(page.webSocketDebuggerUrl, CAPTURE_BLOCKER_EXPRESSION);
+        const info = JSON.parse(raw);
+        if (info.update) update = true;
+        continue;
+      }
+      // Only scan update overlays on normal pages. Do NOT treat nav「登录」text as a gate.
+      if (/^https?:\/\//i.test(page.url || "")) {
+        const raw = await evaluateInPage(page.webSocketDebuggerUrl, CAPTURE_BLOCKER_EXPRESSION);
+        const info = JSON.parse(raw);
+        if (info.update) update = true;
+      }
     } catch {
       // page may be closing
     }
   }
-  // Leftover login tabs without a visible gate are noise once chat is healthy.
-  if (ignoreOrphanLogin && login && !loginVisible && !update) return null;
-  if (!update && !login) return null;
-  if (update && login) return { kind: "update_login", detail: "淘寶需更新並登入" };
+  // Reward loginPop must never block a healthy chat session.
+  const loginBlocking = loginTab && (!ignoreOrphanLogin || loginVisible);
+  if (ignoreOrphanLogin && !update && !loginBlocking) return null;
+  if (!update && !loginBlocking) return null;
+  if (update && loginBlocking) return { kind: "update_login", detail: "淘寶需更新並登入" };
   if (update) return { kind: "update", detail: "淘寶需處理更新" };
   return { kind: "login", detail: "淘寶需手動登入" };
+}
+
+async function dismissRewardLoginPops() {
+  let targets;
+  try {
+    targets = await listDebugPages();
+  } catch {
+    return false;
+  }
+  let dismissed = false;
+  for (const page of targets.filter((t) => t.type === "page" && (t.url || "").includes("loginPop"))) {
+    try {
+      const raw = await evaluateInPage(page.webSocketDebuggerUrl, REWARD_LOGIN_DISMISS_EXPRESSION);
+      const result = JSON.parse(raw);
+      if (result.ok) {
+        log(`已略過獎勵登入彈窗（${result.text || "下次再说"}）`);
+        dismissed = true;
+        await sleep(500);
+        await closeDebugPage(page);
+      }
+    } catch {
+      // popup may already be closing
+    }
+  }
+  return dismissed;
 }
 
 async function closeOrphanLoginPages() {
@@ -219,14 +254,39 @@ async function closeOrphanLoginPages() {
     return;
   }
   for (const page of targets.filter(isLoginPage)) {
+    // Reward splash should be dismissed, not treated as a real login gate.
+    if ((page.url || "").includes("loginPop")) {
+      try {
+        const raw = await evaluateInPage(page.webSocketDebuggerUrl, REWARD_LOGIN_DISMISS_EXPRESSION);
+        if (JSON.parse(raw).ok) {
+          await sleep(300);
+          await closeDebugPage(page);
+          continue;
+        }
+      } catch {
+        // fall through
+      }
+    }
     try {
       const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
-      // Keep the tab if 快速进入 / 立即登录 is still on screen — user may be finishing it.
+      // Keep the tab if 快速进入 / real 立即登录 is still on screen — user may be finishing it.
       if (state.visible) continue;
     } catch {
       // closing is fine
     }
     await closeDebugPage(page);
+  }
+}
+
+async function isRewardLoginPage(page) {
+  if (!(page.url || "").includes("loginPop")) return false;
+  try {
+    const raw = await evaluateInPage(page.webSocketDebuggerUrl, `JSON.stringify({
+      reward: /首次登|领奖励|領獎勵|下次再说|下次再說|淘金币|淘金幣/.test(document.body?.innerText || "")
+    })`);
+    return Boolean(JSON.parse(raw).reward);
+  } catch {
+    return false;
   }
 }
 
@@ -391,6 +451,29 @@ function isLoginPage(page) {
   );
 }
 
+/** Reward splash 「首次登录领奖励」— clicking 立即登录 starts a fake re-login loop. Dismiss with 下次再说. */
+const REWARD_LOGIN_DISMISS_EXPRESSION = `(() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+  };
+  const body = document.body?.innerText || "";
+  const href = location.href || "";
+  if (!href.includes("loginPop")) return JSON.stringify({ ok: false, reason: "not-pop" });
+  if (!/首次登|领奖励|領獎勵|淘金币|淘金幣|下次再说|下次再說/.test(body)) {
+    return JSON.stringify({ ok: false, reason: "not-reward" });
+  }
+  const btn = [...document.querySelectorAll("button,a,div,span")].find((el) => {
+    const t = (el.innerText || "").trim();
+    return visible(el) && (/^下次再说$|^下次再說$/.test(t));
+  });
+  if (!btn) return JSON.stringify({ ok: false, reason: "no-dismiss", sample: body.replace(/\\s+/g, " ").slice(0, 80) });
+  btn.click();
+  return JSON.stringify({ ok: true, text: (btn.innerText || "").trim() });
+})()`;
+
 const LOGIN_CLICK_EXPRESSION = `(() => {
   const visible = (el) => {
     if (!el) return false;
@@ -406,8 +489,8 @@ const LOGIN_CLICK_EXPRESSION = `(() => {
     btn = document.querySelector("button.fm-button.fm-submit")
       || [...document.querySelectorAll("button")].find((el) => /^快速进入$|^快速進入$/.test((el.innerText || "").trim()));
   }
-  // Desktop reward popup 「立即登录」
-  if (!btn && href.includes("loginPop") && /立即登/.test(body)) {
+  // Real loginPop only — NEVER click 立即登录 on the reward splash (首次登录领奖励); that restarts login.
+  if (!btn && href.includes("loginPop") && /立即登/.test(body) && !/首次登|领奖励|領獎勵|下次再说|下次再說/.test(body)) {
     btn = document.querySelector(".login-btn-in");
   }
   if (!btn || !visible(btn)) {
@@ -507,7 +590,11 @@ async function waitForLoginPopup(maxSeconds = 15) {
  */
 async function hasLoginTab() {
   try {
-    return (await listDebugPages()).some(isLoginPage);
+    const pages = (await listDebugPages()).filter(isLoginPage);
+    for (const page of pages) {
+      if (!(await isRewardLoginPage(page))) return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -585,7 +672,10 @@ async function ensureChatReady() {
     await sleep(4000);
   }
 
-  // Prefer an already-usable chat tab. Do not poke login gates first — that was dropping sessions.
+  // Dismiss reward splash first. Clicking its「立即登录」was restarting Havana login every poll.
+  await dismissRewardLoginPops();
+
+  // Prefer an already-usable chat tab. Do not poke real login gates first — that was dropping sessions.
   let found = await findChatPage();
   if (found.page && found.info?.convCount > 0 && !found.info?.loggedOut) {
     await closeOrphanLoginPages();
