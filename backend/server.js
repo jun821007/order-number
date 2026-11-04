@@ -691,6 +691,8 @@ async function writeInbox(inbox) {
 }
 
 function buildSyncStatus(sync, name = "淘寶", staleMs = SYNC_STALE_MS) {
+  const shortDetail = String(sync?.detail || "").trim();
+  const useShortDetail = shortDetail.length > 0 && shortDetail.length <= 18;
   if (!sync?.lastHeartbeatAt) {
     return { state: "offline", label: `${name}同步未連線`, detail: "", lastHeartbeatAt: null };
   }
@@ -698,7 +700,7 @@ function buildSyncStatus(sync, name = "淘寶", staleMs = SYNC_STALE_MS) {
   if (sync.ok === false) {
     return {
       state: "degraded",
-      label: `${name}同步異常`,
+      label: useShortDetail ? shortDetail : `${name}同步異常`,
       detail: sync.detail || "",
       lastHeartbeatAt: sync.lastHeartbeatAt,
       conversation: sync.conversation || ""
@@ -714,9 +716,10 @@ function buildSyncStatus(sync, name = "淘寶", staleMs = SYNC_STALE_MS) {
       lastHeartbeatAt: sync.lastHeartbeatAt
     };
   }
+  const runningLabel = name === "淘寶" ? "淘寶視窗抓取中" : `${name}同步運作中`;
   return {
     state: "running",
-    label: `${name}同步運作中`,
+    label: runningLabel,
     detail: sync.detail || "",
     lastHeartbeatAt: sync.lastHeartbeatAt,
     conversation: sync.conversation || ""

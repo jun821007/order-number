@@ -13,7 +13,6 @@ const backendConfig = {
 const AUTH_TOKEN_STORAGE_KEY = "order_tool_auth_token";
 
 const els = {
-  globalTrackingSearch: document.getElementById("globalTrackingSearch"),
   friendList: document.getElementById("friendList"),
   friendListToggleArea: document.getElementById("friendListToggleArea"),
   friendListStateText: document.getElementById("friendListStateText"),
@@ -774,24 +773,7 @@ function persistAndRender(message) {
 }
 
 function getFilteredFriends() {
-  const keyword = (els.globalTrackingSearch.value || "").trim().toLowerCase();
-  if (!keyword) return [...state.data.friends];
-
-  return state.data.friends.filter((friend) => {
-    const friendName = (friend.name || "").toLowerCase();
-    const receiptName = (friend.receipt_info?.name || "").toLowerCase();
-    const shippingText = [
-      ...(friend.shipping_profiles?.address_list || []).flatMap((item) => [item.name, item.phone, item.address]),
-      ...(friend.shipping_profiles?.convenience_list || []).flatMap((item) => [item.name, item.phone, item.address])
-    ].join(" ").toLowerCase();
-
-    if (friendName.includes(keyword) || receiptName.includes(keyword) || shippingText.includes(keyword)) return true;
-    return friend.parcels.some((parcel) => {
-      const china = (parcel.tracking_id_china || "").toLowerCase();
-      const tw = getTaiwanIdForParcel(parcel).toLowerCase();
-      return china.includes(keyword) || tw.includes(keyword);
-    });
-  });
+  return [...state.data.friends];
 }
 
 function getShippingListKey(type) {
@@ -2223,10 +2205,6 @@ function render() {
   renderInbox();
 }
 
-function applyGlobalSearchFilter() {
-  renderFriendList();
-}
-
 function markSelectedArrived() {
   const selected = [];
   state.data.friends.forEach((friend) => {
@@ -2753,7 +2731,6 @@ async function init() {
   };
 
   toggleCardByBlankClick(els.manualToolsCard, "manualToolsCollapsed");
-  els.globalTrackingSearch.addEventListener("input", applyGlobalSearchFilter);
 
   els.bulkFriendSelect.addEventListener("change", (e) => {
     state.bulkTargetFriendId = e.target.value;

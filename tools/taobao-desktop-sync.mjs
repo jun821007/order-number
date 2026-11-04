@@ -130,12 +130,75 @@ async function inspectChatPage(page) {
       convCount: document.querySelectorAll(".conversation-item").length,
       names: [...document.querySelectorAll(".conversation-item .name")].map((n) => n.innerText.trim()).filter(Boolean),
       active: document.querySelector(".conversation-item.active .name")?.innerText?.trim() || null,
-      loggedOut: /您需要登录才能继续访问|請先登入/.test(document.body?.innerText || "")
+      loggedOut: /您需要登录才能继续访问|請先登入|重新登[录錄]|扫码登|掃碼登|登录后继续|登入後繼續/.test(document.body?.innerText || "")
     })`);
     return JSON.parse(raw);
   } catch {
     return { convCount: 0, names: [], active: null, loggedOut: true };
   }
+}
+
+/** Scan open pages for update / re-login gates that still leave old chat DOM readable (false green). */
+const CAPTURE_BLOCKER_EXPRESSION = `(() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+  };
+  const UPDATE_RE = /发现新版本|發現新版本|立即更新|版本更新|有新版本|更新并重|更新並重|马上更新|馬上更新|马上升级|馬上升級|立即升级|立即升級/;
+  const LOGIN_RE = /重新登[录錄]|请(?:先)?登录|請(?:先)?登入|扫码登|掃碼登|您需要登录|登录后继续|登入後繼續|立即登[录錄入]|快速进入|快速進入|账号登录|帳號登入/;
+  let update = false;
+  let login = false;
+  let sample = "";
+  const mark = (text) => {
+    const t = String(text || "").replace(/\\s+/g, " ").trim();
+    if (!t) return;
+    if (UPDATE_RE.test(t)) update = true;
+    if (LOGIN_RE.test(t)) login = true;
+    if ((update || login) && !sample) sample = t.slice(0, 80);
+  };
+  const href = location.href || "";
+  const title = document.title || "";
+  if (/login\\.taobao\\.com|loginPop/i.test(href) || /登陆|登錄|登录/.test(title)) login = true;
+  mark(title);
+  const nodes = [
+    ...document.querySelectorAll("dialog,[role='dialog'],.modal,.dialog,.popup,.overlay,.mask,[class*='modal'],[class*='dialog'],[class*='popup'],[class*='update'],[class*='login'],[class*='Login']")
+  ].filter(visible);
+  for (const el of nodes) mark((el.innerText || "").slice(0, 600));
+  // Strong whole-page phrases unlikely to be casual chat text.
+  const body = (document.body?.innerText || "").replace(/\\s+/g, " ").slice(0, 4000);
+  if (/发现新版本|發現新版本|更新并重启|更新並重啟|您需要登录才能继续|請先登入才能/.test(body)) {
+    mark(body);
+  }
+  return JSON.stringify({ update, login, sample, href: href.slice(0, 120) });
+})()`;
+
+async function detectCaptureBlockers() {
+  let targets;
+  try {
+    targets = await listDebugPages();
+  } catch {
+    return null;
+  }
+  let update = false;
+  let login = false;
+  for (const page of targets.filter((t) => t.type === "page" && t.webSocketDebuggerUrl)) {
+    if (isLoginPage(page)) login = true;
+    if (!/^https?:\/\//i.test(page.url || "") && !isLoginPage(page)) continue;
+    try {
+      const raw = await evaluateInPage(page.webSocketDebuggerUrl, CAPTURE_BLOCKER_EXPRESSION);
+      const info = JSON.parse(raw);
+      if (info.update) update = true;
+      if (info.login) login = true;
+    } catch {
+      // page may be closing
+    }
+  }
+  if (!update && !login) return null;
+  if (update && login) return { kind: "update_login", detail: "淘寶需更新並登入" };
+  if (update) return { kind: "update", detail: "淘寶需處理更新" };
+  return { kind: "login", detail: "淘寶需手動登入" };
 }
 
 async function closeDebugPage(page) {
@@ -425,6 +488,12 @@ async function ensureChatReady() {
   // Clear login gates first (立即登录 / 快速进入). Chat tabs may already exist in the background
   // while the confirm-login page is still in front — so always try before treating chat as ready.
   await clearLoginGates();
+
+  const blockers = await detectCaptureBlockers();
+  if (blockers) {
+    log(`偵測到擋路：${blockers.detail}`);
+    return { error: blockers.kind === "update" ? "NEED_UPDATE" : "NEED_MANUAL_LOGIN", detail: blockers.detail };
+  }
 
   let found = await findChatPage();
   if (found.error === "TAOBAO_NOT_RUNNING") {
@@ -897,9 +966,22 @@ async function syncOnce() {
     await postHeartbeat(secret, { ok: false, detail: "淘寶未開啟或不是同步模式" });
     return;
   }
+  if (found.error === "NEED_MANUAL_LOGIN" || found.error === "NEED_UPDATE") {
+    log(found.detail || "淘寶需手動處理更新／登入");
+    await postHeartbeat(secret, { ok: false, detail: found.detail || "淘寶需手動登入" });
+    return;
+  }
   if (found.error === "CHAT_NOT_OPEN" || !found.page) {
     log("淘寶桌面版沒有開啟聊天頁（可能被登出，或還沒點開「消息」）");
     await postHeartbeat(secret, { ok: false, detail: "聊天頁未開啟" });
+    return;
+  }
+
+  // Chat DOM can still look fine while an update/login gate sits in front — re-check before green.
+  const blockers = await detectCaptureBlockers();
+  if (blockers) {
+    log(`畫面仍有擋路：${blockers.detail}`);
+    await postHeartbeat(secret, { ok: false, detail: blockers.detail });
     return;
   }
 
