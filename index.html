@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=20260326-26" />
   <link rel="manifest" href="./manifest.webmanifest?v=20260326-26" />
   <title>單號分類工具</title>
-  <link rel="stylesheet" href="./styles.css?v=20261017-04" />
+  <link rel="stylesheet" href="./styles.css?v=20261104-03" />
 </head>
 <body>
   <header class="app-header">
@@ -66,41 +66,45 @@
           </details>
         </section>
 
-        <section id="addParcelCard" class="card collapsible-card">
-          <div class="card-click-header"><h3>新增單號（每行一筆：中國單號 [備註]）</h3></div>
-          <div id="addParcelBody" class="hidden">
-            <textarea id="bulkInput" rows="5" placeholder="YT7609271026793 iPhone手機殼&#10;YT1234567890 小米手環&#10;JP9876543210"></textarea>
-
-            <label class="field-label" for="bulkFriendSelect">新增到哪位朋友</label>
-            <select id="bulkFriendSelect">
-              <option value="">請先選擇朋友</option>
-            </select>
-
-            <div class="button-row">
-              <button id="bulkAddBtn" class="btn primary" disabled>批量新增單號</button>
-            </div>
+        <section id="manualToolsCard" class="card collapsible-card">
+          <div class="card-click-header">
+            <h3>手動工具</h3>
+            <span id="manualToolsStateText" class="collapse-state">展開</span>
           </div>
-        </section>
+          <div id="manualToolsBody" class="hidden">
+            <div class="manual-tool-block">
+              <h4 class="manual-tool-title">新增單號</h4>
+              <p class="helper-text">每行一筆：中國單號 [備註]</p>
+              <textarea id="bulkInput" rows="5" placeholder="YT7609271026793 iPhone手機殼&#10;YT1234567890 小米手環&#10;JP9876543210"></textarea>
 
-        <section id="inboundCard" class="card collapsible-card">
-          <div class="card-click-header"><h3>批量入庫到轉運倉</h3></div>
-          <div id="inboundBody" class="hidden">
-            <p class="helper-text">格式：`重量 中國單號`，可貼多行。只會更新單號管理裡已存在的單號。</p>
-            <textarea id="bulkInboundInput" rows="7" placeholder="0.3 SF1564337616824&#10;0.3 SF1564337616833&#10;0.1 78987614509664&#10;合計7"></textarea>
+              <label class="field-label" for="bulkFriendSelect">新增到哪位朋友</label>
+              <select id="bulkFriendSelect">
+                <option value="">請先選擇朋友</option>
+              </select>
 
-            <label class="field-label" for="bulkInboundPriority">入庫優先級</label>
-            <select id="bulkInboundPriority">
-              <option value="normal">一般</option>
-              <option value="priority">急</option>
-            </select>
-
-
-            <div class="button-row wrap">
-              <button id="bulkInboundBtn" class="btn primary">執行批量入庫</button>
-              <button id="copyBulkInboundResultBtn" class="btn">複製結果</button>
-              <button id="copyBulkInboundWeightTrackingRemarkBtn" class="btn">複製重量單號品名</button>
+              <div class="button-row">
+                <button id="bulkAddBtn" class="btn primary" disabled>批量新增單號</button>
+              </div>
             </div>
-            <pre id="bulkInboundResult" class="summary-box"></pre>
+
+            <div class="manual-tool-block">
+              <h4 class="manual-tool-title">批量入庫到轉運倉</h4>
+              <p class="helper-text">格式：`重量 中國單號`，可貼多行。只會更新單號管理裡已存在的單號。</p>
+              <textarea id="bulkInboundInput" rows="7" placeholder="0.3 SF1564337616824&#10;0.3 SF1564337616833&#10;0.1 78987614509664&#10;合計7"></textarea>
+
+              <label class="field-label" for="bulkInboundPriority">入庫優先級</label>
+              <select id="bulkInboundPriority">
+                <option value="normal">一般</option>
+                <option value="priority">急</option>
+              </select>
+
+              <div class="button-row wrap">
+                <button id="bulkInboundBtn" class="btn primary">執行批量入庫</button>
+                <button id="copyBulkInboundResultBtn" class="btn">複製結果</button>
+                <button id="copyBulkInboundWeightTrackingRemarkBtn" class="btn">複製重量單號品名</button>
+              </div>
+              <pre id="bulkInboundResult" class="summary-box"></pre>
+            </div>
           </div>
         </section>
 
@@ -197,6 +201,6 @@
   </div>
 
   <script src="./app-config.js?v=20261017-04"></script>
-  <script src="./app.js?v=20261104-02"></script>
+  <script src="./app.js?v=20261104-03"></script>
 </body>
 </html>

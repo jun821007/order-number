@@ -23,14 +23,13 @@ const els = {
   emptyState: document.getElementById("emptyState"),
   friendPanel: document.getElementById("friendPanel"),
 
-  addParcelCard: document.getElementById("addParcelCard"),
-  addParcelBody: document.getElementById("addParcelBody"),
+  manualToolsCard: document.getElementById("manualToolsCard"),
+  manualToolsBody: document.getElementById("manualToolsBody"),
+  manualToolsStateText: document.getElementById("manualToolsStateText"),
   bulkInput: document.getElementById("bulkInput"),
   bulkFriendSelect: document.getElementById("bulkFriendSelect"),
   bulkAddBtn: document.getElementById("bulkAddBtn"),
 
-  inboundCard: document.getElementById("inboundCard"),
-  inboundBody: document.getElementById("inboundBody"),
   bulkInboundInput: document.getElementById("bulkInboundInput"),
   bulkInboundPriority: document.getElementById("bulkInboundPriority"),
   bulkInboundBtn: document.getElementById("bulkInboundBtn"),
@@ -103,8 +102,7 @@ const state = {
   inbox: { pending: [], log: [], sync: null, syncLine: null },
   shippedCollapsed: true,
   friendListCollapsed: true,
-  addParcelCollapsed: true,
-  inboundCollapsed: true,
+  manualToolsCollapsed: true,
   shipCollapsed: true,
   tableOwnerFilter: "all",
   bulkInboundCopyText: "",
@@ -213,8 +211,12 @@ function updateFriendListCollapseUI() {
 }
 
 function updateSectionCollapseUI() {
-  if (els.addParcelBody) els.addParcelBody.classList.toggle("hidden", state.addParcelCollapsed);
-  if (els.inboundBody) els.inboundBody.classList.toggle("hidden", state.inboundCollapsed);
+  if (els.manualToolsBody) {
+    els.manualToolsBody.classList.toggle("hidden", state.manualToolsCollapsed);
+  }
+  if (els.manualToolsStateText) {
+    els.manualToolsStateText.textContent = state.manualToolsCollapsed ? "展開" : "收起";
+  }
   if (els.shipBody) els.shipBody.classList.toggle("hidden", state.shipCollapsed);
 }
 
@@ -2750,8 +2752,7 @@ async function init() {
     });
   };
 
-  toggleCardByBlankClick(els.addParcelCard, "addParcelCollapsed");
-  toggleCardByBlankClick(els.inboundCard, "inboundCollapsed");
+  toggleCardByBlankClick(els.manualToolsCard, "manualToolsCollapsed");
   els.globalTrackingSearch.addEventListener("input", applyGlobalSearchFilter);
 
   els.bulkFriendSelect.addEventListener("change", (e) => {

@@ -703,9 +703,45 @@ th, td {
 }
 
 
-.card-click-header { display:flex; align-items:center; min-height:34px; cursor:pointer; }
-.collapsible-card { cursor:pointer; }
-.collapsible-card .hidden, .collapsible-card input, .collapsible-card textarea, .collapsible-card select, .collapsible-card button { cursor:auto; }
+.card-click-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  cursor: pointer;
+}
+
+.card-click-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.collapsible-card { cursor: pointer; }
+.collapsible-card .hidden,
+.collapsible-card input,
+.collapsible-card textarea,
+.collapsible-card select,
+.collapsible-card button { cursor: auto; }
+
+.manual-tool-block {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line, #e5e7eb);
+}
+
+.manual-tool-block:first-child {
+  padding-top: 10px;
+  border-top: 0;
+}
+
+.manual-tool-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+}
 
 
 
