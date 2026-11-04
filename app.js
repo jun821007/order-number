@@ -2327,8 +2327,8 @@ function promptShipmentDetails(defaults = {}) {
     return null;
   }
 
-  // paid_twd is the Taobao card charge, not this manual settlement total.
-  const twdRaw = prompt("輸入台幣總金額（必填）：", "");
+  const twdDefault = Number.isFinite(Number(defaults.twd)) ? String(defaults.twd) : "";
+  const twdRaw = prompt("輸入台幣總金額（必填）：", twdDefault);
   if (twdRaw === null) {
     toast("已略過操作");
     return null;
@@ -2473,7 +2473,12 @@ function confirmPendingShipment(pending) {
   if (alreadyShipped.length) notes.push(`已出轉運：${alreadyShipped.join("、")}`);
   if (notes.length && !confirm(`${notes.join("\n")}\n\n其餘 ${targets.length} 筆照常出貨？`)) return;
 
-  const details = promptShipmentDetails({ address: pending.address, cny: pending.cny, taiwanTracking: pending.taiwan_tracking });
+  const details = promptShipmentDetails({
+    address: pending.address,
+    cny: pending.cny,
+    twd: pending.paid_twd,
+    taiwanTracking: pending.taiwan_tracking
+  });
   if (!details) return;
 
   targets.forEach(({ parcel, weight }) => {
