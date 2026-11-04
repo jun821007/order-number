@@ -23,6 +23,8 @@ const CHAT_URL = process.env.TAOBAO_CHAT_URL
   || "https://market.m.taobao.com/app/im/chat-core/index.html?spm=tbpcclient.personal_index.sidebar.message#/";
 const ENSURE_TASK_NAME = process.env.TAOBAO_ENSURE_TASK || "OrderNumberEnsureTaobao";
 const RELAUNCH_COOLDOWN_MS = Number(process.env.TAOBAO_RELAUNCH_COOLDOWN_MS || 45 * 1000);
+/** After auto-login fails, stop clicking for a while so the user can finish QR / 快速进入 by hand. */
+const LOGIN_CLICK_COOLDOWN_MS = Number(process.env.TAOBAO_LOGIN_CLICK_COOLDOWN_MS || 10 * 60 * 1000);
 const POLL_MS = Number(process.env.TAOBAO_POLL_MS || 15000);
 const ORDER_POLL_MS = Number(process.env.TAOBAO_ORDER_POLL_MS || 60 * 60 * 1000);
 const ORDER_OWNER = process.env.TAOBAO_ORDER_OWNER || "鈞";
@@ -174,7 +176,7 @@ const CAPTURE_BLOCKER_EXPRESSION = `(() => {
   return JSON.stringify({ update, login, sample, href: href.slice(0, 120) });
 })()`;
 
-async function detectCaptureBlockers() {
+async function detectCaptureBlockers({ ignoreOrphanLogin = false } = {}) {
   let targets;
   try {
     targets = await listDebugPages();
@@ -183,10 +185,16 @@ async function detectCaptureBlockers() {
   }
   let update = false;
   let login = false;
+  let loginVisible = false;
   for (const page of targets.filter((t) => t.type === "page" && t.webSocketDebuggerUrl)) {
-    if (isLoginPage(page)) login = true;
-    if (!/^https?:\/\//i.test(page.url || "") && !isLoginPage(page)) continue;
+    const loginTab = isLoginPage(page);
+    if (loginTab) login = true;
+    if (!/^https?:\/\//i.test(page.url || "") && !loginTab) continue;
     try {
+      if (loginTab) {
+        const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
+        if (state.visible) loginVisible = true;
+      }
       const raw = await evaluateInPage(page.webSocketDebuggerUrl, CAPTURE_BLOCKER_EXPRESSION);
       const info = JSON.parse(raw);
       if (info.update) update = true;
@@ -195,11 +203,35 @@ async function detectCaptureBlockers() {
       // page may be closing
     }
   }
+  // Leftover login tabs without a visible gate are noise once chat is healthy.
+  if (ignoreOrphanLogin && login && !loginVisible && !update) return null;
   if (!update && !login) return null;
   if (update && login) return { kind: "update_login", detail: "淘寶需更新並登入" };
   if (update) return { kind: "update", detail: "淘寶需處理更新" };
   return { kind: "login", detail: "淘寶需手動登入" };
 }
+
+async function closeOrphanLoginPages() {
+  let targets;
+  try {
+    targets = await listDebugPages();
+  } catch {
+    return;
+  }
+  for (const page of targets.filter(isLoginPage)) {
+    try {
+      const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
+      // Keep the tab if 快速进入 / 立即登录 is still on screen — user may be finishing it.
+      if (state.visible) continue;
+    } catch {
+      // closing is fine
+    }
+    await closeDebugPage(page);
+  }
+}
+
+let loginClickCooldownUntil = 0;
+let lastLoginClickAt = 0;
 
 async function closeDebugPage(page) {
   try {
@@ -448,119 +480,88 @@ async function clickImmediateLogin() {
   return true;
 }
 
+async function loginPopupVisibleNow() {
+  try {
+    const pages = await listDebugPages();
+    for (const page of pages.filter(isLoginPage)) {
+      const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
+      if (state.visible) return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
 async function waitForLoginPopup(maxSeconds = 15) {
   for (let i = 0; i < maxSeconds; i++) {
-    try {
-      const pages = await listDebugPages();
-      for (const page of pages.filter(isLoginPage)) {
-        const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
-        if (state.visible) return true;
-      }
-    } catch {
-      // not ready
-    }
+    if (await loginPopupVisibleNow()) return true;
     await sleep(1000);
   }
   return false;
 }
 
-async function clearLoginGates() {
-  await waitForLoginPopup(8);
+/**
+ * Only click when a login gate is already visible.
+ * Do NOT wait around hoping a popup appears — that used to re-trigger login every poll and drop sessions.
+ */
+async function hasLoginTab() {
   try {
-    await clickImmediateLogin();
-    // There can be two steps in a row: 立即登录 → 快速进入
-    await waitForLoginPopup(8);
-    await clickImmediateLogin();
-  } catch (error) {
-    log(`自動登入點擊失敗：${error.message}`);
+    return (await listDebugPages()).some(isLoginPage);
+  } catch {
+    return false;
   }
 }
 
-async function ensureChatReady() {
-  let probe = await probeTaobao();
-  if (probe.error === "TAOBAO_NOT_RUNNING" || probe.error === "TAOBAO_SHELL_ONLY") {
-    if (!(await relaunchTaobaoDesktop(probe.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed"))) {
-      return { error: "TAOBAO_NOT_RUNNING" };
-    }
-    await sleep(4000);
+async function clearLoginGates({ force = false } = {}) {
+  const now = Date.now();
+  const loginTab = await hasLoginTab();
+  const visible = await loginPopupVisibleNow();
+  if (!loginTab && !visible) {
+    return { clicked: false, cleared: true, cooling: false };
+  }
+  if (!force && now < loginClickCooldownUntil) {
+    log(`登入冷卻中（還有 ${Math.ceil((loginClickCooldownUntil - now) / 1000)} 秒），先不自動點，請手動完成登入`);
+    return { clicked: false, cleared: false, cooling: true };
+  }
+  // Avoid hammering 快速进入 every 15s while the Havana page is still open.
+  if (!force && lastLoginClickAt && now - lastLoginClickAt < 90 * 1000) {
+    return { clicked: false, cleared: false, cooling: false };
   }
 
-  // Clear login gates first (立即登录 / 快速进入). Chat tabs may already exist in the background
-  // while the confirm-login page is still in front — so always try before treating chat as ready.
-  await clearLoginGates();
-
-  const blockers = await detectCaptureBlockers();
-  if (blockers) {
-    log(`偵測到擋路：${blockers.detail}`);
-    return { error: blockers.kind === "update" ? "NEED_UPDATE" : "NEED_MANUAL_LOGIN", detail: blockers.detail };
-  }
-
-  let found = await findChatPage();
-  if (found.error === "TAOBAO_NOT_RUNNING") {
-    if (await relaunchTaobaoDesktop("closed")) {
-      await sleep(4000);
-      await clearLoginGates();
-      found = await findChatPage();
-    }
-  } else {
-    probe = await probeTaobao();
-    if (probe.error === "TAOBAO_SHELL_ONLY" && await relaunchTaobaoDesktop("shell")) {
-      await sleep(4000);
-      await clearLoginGates();
-      found = await findChatPage();
-    }
-  }
-
-  // Usable chat already open — just make sure Jaguar is selected.
-  if (found.page && found.info?.convCount > 0) {
-    if (found.info.active === TARGET_CONVERSATION) return found;
-    try {
-      const snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
-      if (snapshot.active === TARGET_CONVERSATION) return found;
-      log(`對話不是「${TARGET_CONVERSATION}」，正在自動切換…`);
-      if (await selectTargetConversation(found.page.webSocketDebuggerUrl)) {
-        log(`已切到「${TARGET_CONVERSATION}」`);
-        return await findChatPage();
-      }
-      log(`自動切換對話失敗，目前請手動點「${TARGET_CONVERSATION}」`);
-    } catch (error) {
-      log(`檢查對話失敗：${error.message}`);
-    }
-    return found;
-  }
-
-  if (found.error === "CHAT_NOT_OPEN") {
-    log("聊天頁未開啟，正在自動打開消息…");
-    try {
-      if (await openChatPageViaNavigate()) {
-        found = await findChatPage();
-      } else {
-        const again = await probeTaobao();
-        if (again.error === "TAOBAO_SHELL_ONLY" || again.error === "TAOBAO_NOT_RUNNING") {
-          if (await relaunchTaobaoDesktop(again.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed")) {
-            await sleep(4000);
-            await clearLoginGates();
-            return await findChatPage();
-          }
-        }
-        log("自動打開聊天頁失敗，請在淘寶點「消息」");
-        return found;
-      }
-    } catch (error) {
-      log(`自動打開聊天頁失敗：${error.message}`);
-      const again = await probeTaobao();
-      if (again.error && await relaunchTaobaoDesktop(again.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed")) {
-        await sleep(4000);
-        await clearLoginGates();
-        return await findChatPage();
-      }
-      return found;
-    }
-  }
-  if (!found.page) return found;
-
+  let clicked = false;
   try {
-    if (found.info?.active === TARGET_CONVERSATION) return found;
+    if (await clickImmediateLogin()) {
+      clicked = true;
+      lastLoginClickAt = Date.now();
+    }
+    // Second step may appear after the first click (立即登录 → 快速进入).
+    if (await waitForLoginPopup(8)) {
+      if (await clickImmediateLogin()) {
+        clicked = true;
+        lastLoginClickAt = Date.now();
+      }
+    }
+  } catch (error) {
+    log(`自動登入點擊失敗：${error.message}`);
+  }
+
+  const stillVisible = await loginPopupVisibleNow();
+  const stillTab = await hasLoginTab();
+  const still = stillVisible || stillTab;
+  if (still) {
+    loginClickCooldownUntil = Date.now() + LOGIN_CLICK_COOLDOWN_MS;
+    log(`自動登入未清掉擋路，進入 ${Math.round(LOGIN_CLICK_COOLDOWN_MS / 60000)} 分鐘冷卻，請手動點「快速进入」或掃碼`);
+  } else if (clicked) {
+    loginClickCooldownUntil = 0;
+  }
+  return { clicked, cleared: !still, cooling: still };
+}
+
+async function ensureTargetConversation(found) {
+  if (!found?.page) return found;
+  if (found.info?.active === TARGET_CONVERSATION) return found;
+  try {
     const snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
     if (snapshot.active === TARGET_CONVERSATION) return found;
     log(`對話不是「${TARGET_CONVERSATION}」，正在自動切換…`);
@@ -573,6 +574,95 @@ async function ensureChatReady() {
     log(`檢查對話失敗：${error.message}`);
   }
   return found;
+}
+
+async function ensureChatReady() {
+  let probe = await probeTaobao();
+  if (probe.error === "TAOBAO_NOT_RUNNING" || probe.error === "TAOBAO_SHELL_ONLY") {
+    if (!(await relaunchTaobaoDesktop(probe.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed"))) {
+      return { error: "TAOBAO_NOT_RUNNING" };
+    }
+    await sleep(4000);
+  }
+
+  // Prefer an already-usable chat tab. Do not poke login gates first — that was dropping sessions.
+  let found = await findChatPage();
+  if (found.page && found.info?.convCount > 0 && !found.info?.loggedOut) {
+    await closeOrphanLoginPages();
+    const blockers = await detectCaptureBlockers({ ignoreOrphanLogin: true });
+    if (blockers) {
+      log(`偵測到擋路：${blockers.detail}`);
+      return { error: blockers.kind === "update" ? "NEED_UPDATE" : "NEED_MANUAL_LOGIN", detail: blockers.detail };
+    }
+    return ensureTargetConversation(found);
+  }
+
+  const gate = await clearLoginGates();
+  if (!gate.cleared) {
+    const detail = "淘寶需手動登入";
+    log(`偵測到擋路：${detail}`);
+    return { error: "NEED_MANUAL_LOGIN", detail };
+  }
+
+  const blockers = await detectCaptureBlockers();
+  if (blockers) {
+    log(`偵測到擋路：${blockers.detail}`);
+    if (blockers.kind !== "update") {
+      loginClickCooldownUntil = Math.max(loginClickCooldownUntil, Date.now() + LOGIN_CLICK_COOLDOWN_MS);
+    }
+    return { error: blockers.kind === "update" ? "NEED_UPDATE" : "NEED_MANUAL_LOGIN", detail: blockers.detail };
+  }
+
+  found = await findChatPage();
+  if (found.error === "TAOBAO_NOT_RUNNING") {
+    if (await relaunchTaobaoDesktop("closed")) {
+      await sleep(4000);
+      await clearLoginGates({ force: true });
+      found = await findChatPage();
+    }
+  } else {
+    probe = await probeTaobao();
+    if (probe.error === "TAOBAO_SHELL_ONLY" && await relaunchTaobaoDesktop("shell")) {
+      await sleep(4000);
+      await clearLoginGates({ force: true });
+      found = await findChatPage();
+    }
+  }
+
+  if (found.page && found.info?.convCount > 0) {
+    return ensureTargetConversation(found);
+  }
+
+  if (found.error === "CHAT_NOT_OPEN") {
+    log("聊天頁未開啟，正在自動打開消息…");
+    try {
+      if (await openChatPageViaNavigate()) {
+        found = await findChatPage();
+      } else {
+        const again = await probeTaobao();
+        if (again.error === "TAOBAO_SHELL_ONLY" || again.error === "TAOBAO_NOT_RUNNING") {
+          if (await relaunchTaobaoDesktop(again.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed")) {
+            await sleep(4000);
+            await clearLoginGates({ force: true });
+            return await findChatPage();
+          }
+        }
+        log("自動打開聊天頁失敗，請在淘寶點「消息」");
+        return found;
+      }
+    } catch (error) {
+      log(`自動打開聊天頁失敗：${error.message}`);
+      const again = await probeTaobao();
+      if (again.error && await relaunchTaobaoDesktop(again.error === "TAOBAO_SHELL_ONLY" ? "shell" : "closed")) {
+        await sleep(4000);
+        await clearLoginGates({ force: true });
+        return await findChatPage();
+      }
+      return found;
+    }
+  }
+  if (!found.page) return found;
+  return ensureTargetConversation(found);
 }
 
 function evaluateInPage(wsUrl, expression) {
@@ -977,13 +1067,14 @@ async function syncOnce() {
     return;
   }
 
-  // Chat DOM can still look fine while an update/login gate sits in front — re-check before green.
-  const blockers = await detectCaptureBlockers();
+  // Chat is usable; ignore leftover login tabs without a visible gate (those were causing false yellow).
+  const blockers = await detectCaptureBlockers({ ignoreOrphanLogin: true });
   if (blockers) {
     log(`畫面仍有擋路：${blockers.detail}`);
     await postHeartbeat(secret, { ok: false, detail: blockers.detail });
     return;
   }
+  await closeOrphanLoginPages();
 
   const snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
   if (snapshot.active !== TARGET_CONVERSATION) {
