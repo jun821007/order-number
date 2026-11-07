@@ -188,10 +188,21 @@ async function detectCaptureBlockers({ ignoreOrphanLogin = false } = {}) {
   let loginVisible = false;
   for (const page of targets.filter((t) => t.type === "page" && t.webSocketDebuggerUrl)) {
     const isLogin = isLoginPage(page);
-    if (isLogin && !(await isRewardLoginPage(page))) loginTab = true;
+    if (isLogin && !(await isEmptyLoginShell(page)) && !(await isRewardLoginPage(page))) loginTab = true;
+    if (isHomePage(page)) {
+      try {
+        const home = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, HOME_LOGIN_VISIBLE_EXPRESSION));
+        if (home.visible) {
+          loginTab = true;
+          loginVisible = true;
+        }
+      } catch {
+        // ignore
+      }
+    }
     if (!/^https?:\/\//i.test(page.url || "") && !isLogin) continue;
     try {
-      if (isLogin && !(await isRewardLoginPage(page))) {
+      if (isLogin && !(await isEmptyLoginShell(page)) && !(await isRewardLoginPage(page))) {
         const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
         if (state.visible) loginVisible = true;
       }
@@ -500,6 +511,44 @@ const LOGIN_CLICK_EXPRESSION = `(() => {
   return JSON.stringify({ ok: true, text: (btn.innerText || "").trim().replace(/\\s+/g, "") });
 })()`;
 
+/** Logged-out home card 「立即登录」on new-home (not the reward loginPop). */
+const HOME_LOGIN_CLICK_EXPRESSION = `(() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+  };
+  const btn = document.querySelector("[class*='loginButton']")
+    || [...document.querySelectorAll("[class*='loginCard'] button, [class*='loginCard'] [class*='cardFooter'], button, a, div, span")]
+      .find((el) => visible(el) && /^立即登[录錄入]$/.test((el.innerText || "").trim()));
+  if (!btn || !visible(btn)) {
+    return JSON.stringify({
+      ok: false,
+      reason: "no-home-btn",
+      hasCard: !!document.querySelector("[class*='loginCard']"),
+      sample: (document.body?.innerText || "").replace(/\\s+/g, " ").slice(0, 80)
+    });
+  }
+  btn.click();
+  return JSON.stringify({ ok: true, text: (btn.innerText || "").trim().replace(/\\s+/g, ""), className: String(btn.className || "").slice(0, 60) });
+})()`;
+
+const HOME_LOGIN_VISIBLE_EXPRESSION = `JSON.stringify({
+  visible: (() => {
+    const btn = document.querySelector("[class*='loginButton']")
+      || [...document.querySelectorAll("[class*='loginCard'] [class*='cardFooter'], [class*='loginCard'] button, button, a, div, span")]
+        .find((el) => {
+          const t = (el.innerText || "").trim();
+          if (!/^立即登[录錄入]$/.test(t)) return false;
+          const rect = el.getBoundingClientRect();
+          const style = getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+        });
+    return Boolean(btn);
+  })()
+})`;
+
 const LOGIN_VISIBLE_EXPRESSION = `JSON.stringify({
   visible: (() => {
     const nodes = [
@@ -516,6 +565,29 @@ const LOGIN_VISIBLE_EXPRESSION = `JSON.stringify({
   })()
 })`;
 
+function isHomePage(page) {
+  const url = page.url || "";
+  return page.type === "page" && (
+    url.includes("tbhome-client")
+    || url.includes("new-home")
+    || url.includes("tbhome/pc-growth")
+    || (page.title || "") === "首页"
+    || (page.title || "") === "首頁"
+  );
+}
+
+async function isEmptyLoginShell(page) {
+  if (!(page.url || "").includes("loginPop")) return false;
+  try {
+    const raw = await evaluateInPage(page.webSocketDebuggerUrl, `JSON.stringify({
+      empty: !(document.body && String(document.body.innerText || "").trim())
+    })`);
+    return Boolean(JSON.parse(raw).empty);
+  } catch {
+    return false;
+  }
+}
+
 async function clickImmediateLogin() {
   let targets;
   try {
@@ -528,6 +600,8 @@ async function clickImmediateLogin() {
 
   let clicked = false;
   for (const page of loginPages) {
+    if (await isEmptyLoginShell(page)) continue;
+    if (await isRewardLoginPage(page)) continue;
     try {
       const raw = await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_CLICK_EXPRESSION);
       const result = JSON.parse(raw);
@@ -552,6 +626,7 @@ async function clickImmediateLogin() {
       if (!pops.length) return true;
       let anyVisible = false;
       for (const pop of pops) {
+        if (await isEmptyLoginShell(pop) || await isRewardLoginPage(pop)) continue;
         const state = JSON.parse(await evaluateInPage(pop.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
         if (state.visible) anyVisible = true;
       }
@@ -563,10 +638,46 @@ async function clickImmediateLogin() {
   return true;
 }
 
+async function homeLoginCardVisible() {
+  try {
+    const pages = (await listDebugPages()).filter(isHomePage);
+    for (const page of pages) {
+      const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, HOME_LOGIN_VISIBLE_EXPRESSION));
+      if (state.visible) return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+async function clickHomeLoginCard() {
+  let targets;
+  try {
+    targets = await listDebugPages();
+  } catch {
+    return false;
+  }
+  for (const page of targets.filter(isHomePage)) {
+    try {
+      const raw = await evaluateInPage(page.webSocketDebuggerUrl, HOME_LOGIN_CLICK_EXPRESSION);
+      const result = JSON.parse(raw);
+      if (result.ok) {
+        log(`已自動點首頁「${result.text || "立即登录"}」`);
+        return true;
+      }
+    } catch {
+      // page may be navigating
+    }
+  }
+  return false;
+}
+
 async function loginPopupVisibleNow() {
   try {
     const pages = await listDebugPages();
     for (const page of pages.filter(isLoginPage)) {
+      if (await isEmptyLoginShell(page) || await isRewardLoginPage(page)) continue;
       const state = JSON.parse(await evaluateInPage(page.webSocketDebuggerUrl, LOGIN_VISIBLE_EXPRESSION));
       if (state.visible) return true;
     }
@@ -592,7 +703,9 @@ async function hasLoginTab() {
   try {
     const pages = (await listDebugPages()).filter(isLoginPage);
     for (const page of pages) {
-      if (!(await isRewardLoginPage(page))) return true;
+      if (await isEmptyLoginShell(page)) continue;
+      if (await isRewardLoginPage(page)) continue;
+      return true;
     }
     return false;
   } catch {
@@ -602,9 +715,10 @@ async function hasLoginTab() {
 
 async function clearLoginGates({ force = false } = {}) {
   const now = Date.now();
+  const homeLogin = await homeLoginCardVisible();
   const loginTab = await hasLoginTab();
   const visible = await loginPopupVisibleNow();
-  if (!loginTab && !visible) {
+  if (!homeLogin && !loginTab && !visible) {
     return { clicked: false, cleared: true, cooling: false };
   }
   if (!force && now < loginClickCooldownUntil) {
@@ -618,6 +732,12 @@ async function clearLoginGates({ force = false } = {}) {
 
   let clicked = false;
   try {
+    // Step 0: logged-out home card → opens Havana / confirm-login.
+    if (homeLogin && await clickHomeLoginCard()) {
+      clicked = true;
+      lastLoginClickAt = Date.now();
+      await waitForLoginPopup(12);
+    }
     if (await clickImmediateLogin()) {
       clicked = true;
       lastLoginClickAt = Date.now();
@@ -633,9 +753,10 @@ async function clearLoginGates({ force = false } = {}) {
     log(`自動登入點擊失敗：${error.message}`);
   }
 
+  const stillHome = await homeLoginCardVisible();
   const stillVisible = await loginPopupVisibleNow();
   const stillTab = await hasLoginTab();
-  const still = stillVisible || stillTab;
+  const still = stillHome || stillVisible || stillTab;
   if (still) {
     loginClickCooldownUntil = Date.now() + LOGIN_CLICK_COOLDOWN_MS;
     log(`自動登入未清掉擋路，進入 ${Math.round(LOGIN_CLICK_COOLDOWN_MS / 60000)} 分鐘冷卻，請手動點「快速进入」或掃碼`);
