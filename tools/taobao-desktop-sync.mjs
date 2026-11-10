@@ -106,6 +106,46 @@ const EXTRACT_EXPRESSION = `(() => {
   return JSON.stringify({ active: activeEl ? activeEl.innerText.trim() : null, messages });
 })()`;
 
+/** Virtualized chat lists often stay mid-history after relaunch; jump to bottom before reading. */
+const SCROLL_CHAT_BOTTOM_EXPRESSION = `(() => {
+  const first = document.querySelector(".message-item");
+  let el = first && first.parentElement;
+  while (el && el !== document.body) {
+    const style = getComputedStyle(el);
+    if ((el.scrollHeight - el.clientHeight) > 40 && /(auto|scroll)/.test(style.overflowY + style.overflow)) {
+      el.scrollTop = el.scrollHeight;
+      return JSON.stringify({ ok: true, via: "parent", top: el.scrollTop, height: el.scrollHeight });
+    }
+    el = el.parentElement;
+  }
+  const boxes = [...document.querySelectorAll("div")].filter((node) => {
+    const style = getComputedStyle(node);
+    return (node.scrollHeight - node.clientHeight) > 80 && /(auto|scroll)/.test(style.overflowY + style.overflow);
+  });
+  boxes.sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+  if (boxes[0]) {
+    boxes[0].scrollTop = boxes[0].scrollHeight;
+    return JSON.stringify({ ok: true, via: "largest", top: boxes[0].scrollTop, height: boxes[0].scrollHeight });
+  }
+  return JSON.stringify({ ok: false });
+})()`;
+
+async function scrollChatToLatest(wsUrl) {
+  try {
+    for (let i = 0; i < 3; i++) {
+      await evaluateInPage(wsUrl, SCROLL_CHAT_BOTTOM_EXPRESSION);
+      await sleep(700);
+    }
+  } catch {
+    // reading can continue with whatever is currently mounted
+  }
+}
+
+function parseTaobaoLocalMs(ts) {
+  const value = Date.parse(`${String(ts || "").trim().replace(" ", "T")}+08:00`);
+  return Number.isFinite(value) ? value : NaN;
+}
+
 async function listDebugPages() {
   const res = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`, { signal: AbortSignal.timeout(5000) });
   return res.json();
@@ -1287,7 +1327,9 @@ async function syncOnce() {
   }
   await closeOrphanLoginPages();
 
-  const snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
+  // After relaunch/login the IM list often stays mid-history (e.g. stuck on 11/7 while phone has today's inbound).
+  await scrollChatToLatest(found.page.webSocketDebuggerUrl);
+  let snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
   if (snapshot.active !== TARGET_CONVERSATION) {
     log(`目前開的對話是「${snapshot.active || "無"}」，請切回「${TARGET_CONVERSATION}」`);
     await postHeartbeat(secret, {
@@ -1296,6 +1338,17 @@ async function syncOnce() {
       conversation: snapshot.active || ""
     });
     return;
+  }
+
+  // If still looking stale, re-select the conversation once to force the latest window.
+  const newestTs = snapshot.messages?.[snapshot.messages.length - 1]?.ts || "";
+  const newestAgeMs = newestTs ? Date.now() - parseTaobaoLocalMs(newestTs) : Number.POSITIVE_INFINITY;
+  if (Number.isFinite(newestAgeMs) && newestAgeMs > 36 * 60 * 60 * 1000) {
+    log(`畫面訊息偏舊（最新 ${newestTs || "無"}），重新點對話拉最新…`);
+    await selectTargetConversation(found.page.webSocketDebuggerUrl);
+    await sleep(1200);
+    await scrollChatToLatest(found.page.webSocketDebuggerUrl);
+    snapshot = JSON.parse(await evaluateInPage(found.page.webSocketDebuggerUrl, EXTRACT_EXPRESSION));
   }
 
   const messages = snapshot.messages.map((m) => ({ id: `${m.ts}|${m.text}`, ts: m.ts, sender: m.sender, self: m.self, text: m.text }));
